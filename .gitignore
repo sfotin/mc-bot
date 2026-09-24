@@ -1,0 +1,24 @@
+# Зависимости
+node_modules/
+
+# Секреты/локальная конфигурация - см. .env.example
+.env
+.env.*
+!.env.example
+config.local.js
+config.local.json
+
+# Логи
+*.log
+build.log
+npm-debug.log*
+
+# Кэш
+.cache/
+.npm/
+
+# Файлы ОС/редакторов
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
