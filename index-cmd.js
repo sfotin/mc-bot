@@ -414,7 +414,12 @@ function buildSchemaCommandList(schema, { origin, prepare, foundationTo, foundat
   const plan = buildFillCommands(schema, origin);
   const cmdWord = pluralizeRu(plan.solidCommandCount, 'команда', 'команды', 'команд');
   const attWord = pluralizeRu(plan.attachedCount, 'крепление', 'крепления', 'креплений');
-  log(`[raw] ${schema.length} блоков -> ${plan.solidCommandCount} ${cmdWord} (одиночных ${plan.singleCommandCount}), плюс ${plan.attachedCount} ${attWord}`);
+  const liqWord = pluralizeRu(plan.liquidCommandCount, 'команда', 'команды', 'команд');
+  log(`[raw] ${schema.length} блоков -> ${plan.solidCommandCount} ${cmdWord} (снизу вверх, одиночных ${plan.singleCommandCount}), плюс ${plan.attachedCount} ${attWord}, плюс ${plan.liquidCommandCount} ${liqWord} воды/лавы (финальный проход, боксами)`);
+  if (plan.fallingSupportWarnings.length > 0) {
+    log(`[raw] ПРЕДУПРЕЖДЕНИЕ (порядок постройки, см. §12 BOT.md): ${plan.fallingSupportWarnings.length} падающих блоков без гарантированной опоры на момент установки:`);
+    for (const warning of plan.fallingSupportWarnings) log(`[raw]   ${warning}`);
+  }
   result.push(...plan.commands);
 
   return result;
