@@ -13,6 +13,11 @@ config.local.json
 build.log
 npm-debug.log*
 
+# Сырые файлы региона сервера (десятки МБ, снимаются заново по запросу -
+# см. BOT.md/tools/terrain/); в git идёт только обработанный результат
+# в docs/terrain/.
+*.mca
+
 # Кэш
 .cache/
 .npm/
