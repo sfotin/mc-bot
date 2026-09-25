@@ -3,6 +3,7 @@
 process.on('uncaughtException', (e) => console.error('UNCAUGHT:', e));
 process.on('unhandledRejection', (e) => console.error('REJECTION:', e));
 
+const fs = require('fs');
 const path = require('path');
 
 const config = require('./config');
@@ -18,7 +19,7 @@ const {
   rotateSchema,
   hasDirectionalMetadataBlocks
 } = require('./lib/fill-plan');
-const { log } = require('./lib/utils');
+const { log, sleep } = require('./lib/utils');
 
 // Лимит длины chat-пакета в 1.12.2 (протокольная строка String(256))
 const MAX_CHAT_LENGTH = 256;
@@ -44,9 +45,22 @@ const WATCHDOG_TIMEOUT_MS = 15000;
 // команды - даём миру/чанкам вокруг игрока чуть осесть.
 const READY_PAUSE_MS = 1000;
 
+// Сколько ждать подтверждения /gamemode 3 (пакет game_state_change,
+// reason=3) и /tp (пакет position) - если сервер не ответил за это время,
+// скорее всего у бота нет OP. Не привязано к config - это таймаут
+// протокольного рукопожатия команды, а не поведенческая настройка.
+const GAMEMODE_CONFIRM_TIMEOUT_MS = 5000;
+const TELEPORT_CONFIRM_TIMEOUT_MS = 5000;
+
+// Сколько ждать ответов сервера на уже отправленные команды после того,
+// как последняя команда ушла, прежде чем считать сводку и завершаться -
+// с запасом на сетевую задержку и то, что сервер отвечает не мгновенно.
+const FINAL_DRAIN_TIMEOUT_MS = 10000;
+
 /**
  * CLI: node index-cmd.js [схема.json X Y Z] [--prepare] [--foundation-to=Y] [--foundation-material=stone] [--rotate=0|90|180|270]
  *      node index-cmd.js --wipe X1 Y1 Z1 X2 Y2 Z2 [--ground=Y]
+ *      node index-cmd.js --retry logs/failed-<схема>-<время>.txt
  * Без позиционных аргументов - стандартный тест "продержаться 60 сек и /setblock".
  * С позиционными X Y Z после имени файла схемы - грузим схему, X Y Z -
  * базовая точка (origin), относительно которой отложены координаты схемы.
@@ -64,6 +78,16 @@ const READY_PAUSE_MS = 1000;
  *    заливает указанный объём (углы бокса, порядок координат не важен)
  *    воздухом; если задан --ground=Y - всё строго ниже Y заливает stone,
  *    а от Y и выше - воздухом. Несовместим с режимом схемы.
+ *  --retry <файл> - повторно шлёт команды из текстового файла (одна
+ *    команда на строку - формат тот же, что у logs/failed-*.txt, см.
+ *    §11 «Опыт» в BOT.md), той же логикой телепорта/зон и учёта ответов,
+ *    что и обычная схема. Несовместим со схемой и --wipe.
+ *
+ * Перед стройкой (кроме тестового режима без схемы/--wipe/--retry) бот
+ * сам встаёт на площадку: /gamemode 3 (наблюдатель) и /tp в центр её
+ * габарита на высоту max(Y)+10, чтобы сервер догрузил нужные чанки -
+ * см. buildZonePlan/beginWork. Если габарит больше config.tpRenderRadiusBlocks*2,
+ * стройка режется на зоны со своим /tp перед каждой.
  */
 function parseCli(argv) {
   const args = argv.slice(2);
@@ -169,6 +193,38 @@ function parseCliWipeRequest(argv) {
   };
 
   return { box, ground };
+}
+
+/**
+ * Разбирает --retry <файл>. Файл - результат прошлого запуска (одна
+ * команда на строку, см. writeFailedCommandsFile) - пустые строки
+ * пропускаются. Как и у --wipe/--rotate, кривые аргументы - fail-fast.
+ */
+function parseCliRetryRequest(argv) {
+  const { positional, flags } = parseCli(argv);
+  if (flags.retry !== true && flags.retry !== 'true') return null;
+
+  const filePath = positional[0];
+  if (!filePath) {
+    console.error('[raw] ОШИБКА: --retry требует путь к файлу с командами.');
+    process.exit(1);
+  }
+
+  let text;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    console.error(`[raw] ОШИБКА: не удалось прочитать файл --retry "${filePath}": ${err.message}`);
+    process.exit(1);
+  }
+
+  const commands = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  if (commands.length === 0) {
+    console.error(`[raw] ОШИБКА: файл --retry "${filePath}" пуст.`);
+    process.exit(1);
+  }
+
+  return { filePath, commands };
 }
 
 // Протокольный лимит /fill в 1.12.2 (32*32*32). --wipe гонит только
@@ -279,6 +335,41 @@ function simplifyChatComponent(jsonString) {
 }
 
 /**
+ * Ответы сервера на /fill и /setblock приходят как чат-компонент вида
+ * {"translate":"commands.fill.success","with":[...]}, а не готовым
+ * текстом - клиент без загруженного языкового файла не может (и не
+ * должен) его "переводить" сам, но нам и не нужен текст: достаточно
+ * ключа translate, чтобы понять, что это ЗА ответ. Возвращает ключ или
+ * null, если сообщение не похоже на ответ команды (обычный текст,
+ * составной компонент без translate и т.п.) - см. §11 «Опыт» в BOT.md,
+ * как именно это используется для сопоставления с командой.
+ */
+function extractTranslateKey(jsonString) {
+  try {
+    const root = JSON.parse(jsonString);
+    if (root && typeof root.translate === 'string') return root.translate;
+  } catch (err) {
+    // не JSON (сырой текст) - точно не ответ команды
+  }
+  return null;
+}
+
+// См. классификацию в задаче/§11 «Опыт»: успех - обычные success-ключи;
+// "без изменений" - fill.failed и setblock.noChange, это НЕ ошибка (уже
+// стоит нужный блок или объём и так пуст/полон); всё остальное с ключом,
+// начинающимся на "commands." (значит это точно ответ на нашу команду,
+// а не случайный чат) - ошибка.
+const RESPONSE_SUCCESS_KEYS = new Set(['commands.fill.success', 'commands.setblock.success']);
+const RESPONSE_NO_CHANGE_KEYS = new Set(['commands.fill.failed', 'commands.setblock.noChange']);
+
+function classifyResponseKey(translateKey) {
+  if (RESPONSE_SUCCESS_KEYS.has(translateKey)) return 'success';
+  if (RESPONSE_NO_CHANGE_KEYS.has(translateKey)) return 'noChange';
+  if (translateKey.startsWith('commands.')) return 'error';
+  return null; // не похоже на ответ именно нашей команде - не трогаем FIFO
+}
+
+/**
  * Готовит площадку (опционально, --prepare) и выкладывает уже
  * загруженную и провалидированную схему - строит ПОЛНЫЙ упорядоченный
  * список команд (расчистка, основание, схема) и просто возвращает его,
@@ -379,6 +470,202 @@ function loadSchemaOrExit(fileName) {
   }
 }
 
+// Разбирают /fill и /setblock, которые сами же и генерируем (см.
+// boxToCommand в lib/fill-plan.js) - формат фиксированный, свой же вывод
+// разбираем регуляркой без риска: используется только для геометрии
+// телепорта (зоны, габарит, высота), не для чего-то, что может прийти
+// от сервера или пользователя.
+const FILL_COMMAND_RE = /^\/fill (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) /;
+const SETBLOCK_COMMAND_RE = /^\/setblock (-?\d+) (-?\d+) (-?\d+) /;
+
+function parseCommandBounds(cmd) {
+  const fillMatch = cmd.match(FILL_COMMAND_RE);
+  if (fillMatch) {
+    const x1 = Number(fillMatch[1]); const y1 = Number(fillMatch[2]); const z1 = Number(fillMatch[3]);
+    const x2 = Number(fillMatch[4]); const y2 = Number(fillMatch[5]); const z2 = Number(fillMatch[6]);
+    return {
+      x1: Math.min(x1, x2), x2: Math.max(x1, x2),
+      y2: Math.max(y1, y2),
+      z1: Math.min(z1, z2), z2: Math.max(z1, z2),
+      cx: Math.floor((x1 + x2) / 2), cz: Math.floor((z1 + z2) / 2)
+    };
+  }
+  const setMatch = cmd.match(SETBLOCK_COMMAND_RE);
+  if (setMatch) {
+    const x = Number(setMatch[1]); const y = Number(setMatch[2]); const z = Number(setMatch[3]);
+    return { x1: x, x2: x, y2: y, z1: z, z2: z, cx: x, cz: z };
+  }
+  return null; // не /fill и не /setblock (не должно случаться для наших команд)
+}
+
+/**
+ * Считает общий габарит (X/Z) и максимальный Y всего списка команд, плюс
+ * представительную точку (x,z) каждой команды (центр для /fill, сама
+ * точка для /setblock) - на основе этого строятся зоны телепорта (см.
+ * buildZonePlan). Работает для схемы, --wipe и --retry одинаково: не
+ * важно, откуда взялись команды, важна только их геометрия.
+ */
+function computeCommandListBounds(commandList) {
+  let minX = Infinity; let maxX = -Infinity;
+  let minZ = Infinity; let maxZ = -Infinity;
+  let maxY = -Infinity;
+  const positions = new Array(commandList.length);
+
+  for (let i = 0; i < commandList.length; i++) {
+    const b = parseCommandBounds(commandList[i]);
+    if (!b) {
+      positions[i] = { x: 0, z: 0 };
+      continue;
+    }
+    positions[i] = { x: b.cx, z: b.cz };
+    if (b.x1 < minX) minX = b.x1;
+    if (b.x2 > maxX) maxX = b.x2;
+    if (b.z1 < minZ) minZ = b.z1;
+    if (b.z2 > maxZ) maxZ = b.z2;
+    if (b.y2 > maxY) maxY = b.y2;
+  }
+
+  return { minX, maxX, minZ, maxZ, maxY, positions };
+}
+
+/**
+ * Делит commandList на зоны телепорта и, если зон больше одной,
+ * ПЕРЕСТРАИВАЕТ список команд так, чтобы команды одной зоны шли подряд
+ * (иначе индексы зон не были бы непрерывными диапазонами). Порядок
+ * команд ВНУТРИ зоны сохраняется как в исходном списке - а значит и
+ * инвариант "твёрдые раньше крепящихся, крепящиеся в порядке файла"
+ * (см. §4.2/§4.4 BOT.md) не ломается: и твёрдая, и крепящаяся команда
+ * для одной и той же постройки лежат рядом в пространстве и почти
+ * наверняка попадут в одну зону, а стабильная группировка не меняет их
+ * взаимный порядок.
+ *
+ * Возвращает { commandList, zones }, где zones - массив
+ * { centerX, centerZ, y, startIndex, endIndex } (индексы уже по НОВОМУ,
+ * возможно переставленному commandList). Если всё влезает в одну зону -
+ * commandList возвращается как есть (не пересобирается), zones - из
+ * одного элемента.
+ */
+function buildZonePlan(commandList) {
+  if (commandList.length === 0) return { commandList, zones: [] };
+
+  const { minX, maxX, minZ, maxZ, maxY, positions } = computeCommandListBounds(commandList);
+  const teleportY = maxY + 10;
+  const diameter = config.tpRenderRadiusBlocks * 2;
+  const width = maxX - minX + 1;
+  const depth = maxZ - minZ + 1;
+
+  if (width <= diameter && depth <= diameter) {
+    return {
+      commandList,
+      zones: [{
+        centerX: Math.floor((minX + maxX) / 2),
+        centerZ: Math.floor((minZ + maxZ) / 2),
+        y: teleportY,
+        startIndex: 0,
+        endIndex: commandList.length - 1
+      }]
+    };
+  }
+
+  const buckets = new Map(); // zoneKey -> [индекс, индекс, ...] (по возрастанию - стабильно)
+  const zoneOrder = [];
+  positions.forEach((p, i) => {
+    const zx = Math.floor((p.x - minX) / diameter);
+    const zz = Math.floor((p.z - minZ) / diameter);
+    const key = `${zx},${zz}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      zoneOrder.push(key);
+    }
+    buckets.get(key).push(i);
+  });
+
+  const reordered = [];
+  const zones = [];
+  for (const key of zoneOrder) {
+    const indices = buckets.get(key);
+    const startIndex = reordered.length;
+    let sumX = 0; let sumZ = 0;
+    for (const idx of indices) {
+      reordered.push(commandList[idx]);
+      sumX += positions[idx].x;
+      sumZ += positions[idx].z;
+    }
+    zones.push({
+      centerX: Math.round(sumX / indices.length),
+      centerZ: Math.round(sumZ / indices.length),
+      y: teleportY,
+      startIndex,
+      endIndex: reordered.length - 1
+    });
+  }
+
+  log(`[raw] Габарит ${width}x${depth} больше дальности прорисовки (${diameter}x${diameter}) - стройка разбита на ${zones.length} зон.`);
+
+  return { commandList: reordered, zones };
+}
+
+/**
+ * Ждёт (опросом каждые pollMs), пока predicate() не станет true, либо
+ * пока не истечёт timeoutMs (если задан) - в обоих случаях просто
+ * резолвится, без явного различения "дождались" / "не дождались":
+ * вызывающий код сам решает, что делать дальше по факту (см. beginWork -
+ * там после ожидания просто проверяется реальное состояние).
+ */
+function waitUntil(predicate, timeoutMs) {
+  return new Promise((resolve) => {
+    const deadline = timeoutMs ? Date.now() + timeoutMs : null;
+    (function check() {
+      if (predicate() || (deadline !== null && Date.now() >= deadline)) {
+        resolve();
+        return;
+      }
+      setTimeout(check, 200);
+    })();
+  });
+}
+
+/**
+ * Отражает КАЖДУЮ запись в stdout/stderr (значит, и все log()/console.*
+ * вызовы, откуда бы они ни шли) в файл - без этого пришлось бы находить
+ * и дублировать каждый отдельный вызов log() по коду. Возвращает функцию
+ * закрытия потока (не используется при обычном exit, но не мешает).
+ */
+function setupLogFileMirror(logFilePath) {
+  fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
+  const stream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+  process.stdout.write = (chunk, ...rest) => {
+    stream.write(chunk);
+    return originalStdoutWrite(chunk, ...rest);
+  };
+  process.stderr.write = (chunk, ...rest) => {
+    stream.write(chunk);
+    return originalStderrWrite(chunk, ...rest);
+  };
+
+  return () => stream.end();
+}
+
+/**
+ * Метка запуска для имён logs/<label>-<время>.log и logs/failed-<label>-<время>.txt -
+ * из имени схемы, "wipe", или из имени файла --retry (без выдумывания
+ * оригинальной схемы обратно - просто "retry-<имя файла>").
+ */
+function buildRunLabel({ schemaRequest, wipeRequest, retryRequest }) {
+  if (schemaRequest) return path.basename(schemaRequest.fileName, '.json');
+  if (wipeRequest) return 'wipe';
+  if (retryRequest) return `retry-${path.basename(retryRequest.filePath).replace(/\.[^.]*$/, '')}`;
+  return 'test';
+}
+
+function timestampForFileName() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
 /**
  * Автопереподключение (см. константы MAX_CONNECT_ATTEMPTS/RECONNECT_DELAY_MS
  * в начале файла):
@@ -399,19 +686,69 @@ function start() {
     process.exit(1);
   }
 
-  // --wipe проверяется первым и, если указан, отключает разбор схемы:
-  // позиционные координаты --wipe (шесть чисел) иначе могли бы случайно
-  // распарситься как "имя_файла X Y Z" схемы.
-  const wipeRequest = parseCliWipeRequest(process.argv);
-  const schemaRequest = wipeRequest ? null : parseCliSchemaRequest(process.argv);
+  // --retry проверяется первым (несовместим со схемой/--wipe), затем
+  // --wipe (позиционные координаты которого иначе могли бы случайно
+  // распарситься как "имя_файла X Y Z" схемы).
+  const retryRequest = parseCliRetryRequest(process.argv);
+  const wipeRequest = retryRequest ? null : parseCliWipeRequest(process.argv);
+  const schemaRequest = (retryRequest || wipeRequest) ? null : parseCliSchemaRequest(process.argv);
   const loadedSchema = schemaRequest ? loadSchemaOrExit(schemaRequest.fileName) : null;
   const schema = schemaRequest ? applyRotation(loadedSchema, schemaRequest.rotate) : null;
-  const commandList = wipeRequest
-    ? buildWipeCommandList(wipeRequest)
-    : (schemaRequest ? buildSchemaCommandList(schema, schemaRequest) : null);
+
+  const runLabel = buildRunLabel({ schemaRequest, wipeRequest, retryRequest });
+  const runTimestamp = timestampForFileName();
+  setupLogFileMirror(path.join('logs', `${runLabel}-${runTimestamp}.log`));
+
+  const rawCommandList = retryRequest
+    ? (log(`[raw] --retry: ${retryRequest.commands.length} команд из "${retryRequest.filePath}"`), retryRequest.commands)
+    : (wipeRequest
+      ? buildWipeCommandList(wipeRequest)
+      : (schemaRequest ? buildSchemaCommandList(schema, schemaRequest) : null));
+
+  // Телепорт-зоны нужны только там, где реально что-то строится - в
+  // тестовом режиме (без схемы/--wipe/--retry) площадки нет вообще.
+  const needsTeleport = rawCommandList !== null;
+  const { commandList, zones } = needsTeleport
+    ? buildZonePlan(rawCommandList)
+    : { commandList: rawCommandList, zones: [] };
+
+  const failedLogPath = path.join('logs', `failed-${runLabel}-${runTimestamp}.txt`);
 
   let attempt = 0;
   let sentIndex = -1; // индекс последней команды из commandList, реально отправленной client.write
+
+  // Итоги ответов сервера - живут в этой (внешней) области видимости,
+  // а не внутри connectAttempt, поэтому переживают переподключения и
+  // сводка в конце получается по ВСЕМУ запуску, а не по последней попытке.
+  let successCount = 0;
+  let noChangeCount = 0;
+  const errorReasonCounts = new Map();
+  const failedCommandTexts = [];
+
+  function recordResponse(kind, command, translateKey) {
+    if (kind === 'success') { successCount++; return; }
+    if (kind === 'noChange') { noChangeCount++; return; }
+    failedCommandTexts.push(command);
+    errorReasonCounts.set(translateKey, (errorReasonCounts.get(translateKey) || 0) + 1);
+  }
+
+  function writeFailedCommandsFileIfAny() {
+    if (failedCommandTexts.length === 0) return;
+    fs.mkdirSync(path.dirname(failedLogPath), { recursive: true });
+    fs.writeFileSync(failedLogPath, failedCommandTexts.join('\n') + '\n');
+    log(`[raw] Команды с ошибками (${failedCommandTexts.length}) сохранены в ${failedLogPath} - можно повторить: node index-cmd.js --retry ${failedLogPath}`);
+  }
+
+  function printRunSummary() {
+    const total = successCount + noChangeCount + failedCommandTexts.length;
+    log(`[raw] ИТОГ: ${total} ответов - успешно ${successCount}, без изменений ${noChangeCount}, ошибок ${failedCommandTexts.length}.`);
+    if (errorReasonCounts.size > 0) {
+      for (const [reason, count] of errorReasonCounts) {
+        log(`[raw]   ошибка "${reason}": ${count}`);
+      }
+    }
+    writeFailedCommandsFileIfAny();
+  }
 
   function connectAttempt() {
     attempt++;
@@ -443,17 +780,33 @@ function start() {
     }, 1000);
     client.on('packet', () => { lastPacketAt = Date.now(); });
 
-    const commands = createCommandQueue(client, config.commandsPerSecond, () => {
+    // FIFO отправленных, но ещё не подтверждённых чатом команд - только
+    // для ЭТОГО соединения (после переподключения судьба команд,
+    // "зависших" в полёте на старом соединении, неизвестна - см. §11
+    // «Опыт» в BOT.md, там же - почему сопоставление именно такое).
+    const pendingResponses = [];
+
+    const commands = createCommandQueue(client, config.commandsPerSecond, (message) => {
+      pendingResponses.push(message);
       if (commandList === null) return;
       sentIndex++;
       if (sentIndex === commandList.length - 1) {
-        // Всё отправлено - сервер сам не закроет соединение, поэтому не
-        // висим бесконечно: даём секунду на последние подтверждения в
-        // чат (commands.fill.success и т.п.) и завершаем сами. handleDisconnect
-        // увидит sentIndex на конце списка и корректно завершится exit(0)
-        // без попытки переподключения (штатное завершение).
-        log('[raw] Все команды схемы отправлены - жду подтверждений и завершаю соединение.');
-        setTimeout(() => client.end(), 1000);
+        log('[raw] Все команды отправлены - жду ответов сервера...');
+        waitUntil(() => pendingResponses.length === 0, FINAL_DRAIN_TIMEOUT_MS).then(() => {
+          if (pendingResponses.length > 0) {
+            // Сервер вообще не ответил (не путать с commands.*.failed/noChange -
+            // это ЯВНЫЙ ответ "ничего не изменилось", а тут ответа нет совсем -
+            // ровно симптом гипотезы про незагруженные чанки, см. §11 «Опыт»).
+            // Раз не знаем, выполнилась ли команда, безопаснее считать её
+            // ошибкой и положить в файл повтора, чем молча забыть.
+            log(`[raw] Не дождался ответа на ${pendingResponses.length} команд(ы) за ${FINAL_DRAIN_TIMEOUT_MS / 1000} сек - считаю ошибкой.`);
+            while (pendingResponses.length > 0) {
+              recordResponse('error', pendingResponses.shift(), 'нет ответа от сервера');
+            }
+          }
+          printRunSummary();
+          client.end();
+        });
       }
     });
 
@@ -504,7 +857,19 @@ function start() {
       handleDisconnect(`end: ${reason || ''}`);
     });
 
+    // Ответы на /fill и /setblock приходят сюда же, как обычный чат (см.
+    // extractTranslateKey/classifyResponseKey выше и §11 «Опыт» в BOT.md -
+    // там подробно расписано, как именно сопоставление сделано и какие у
+    // него границы применимости).
     client.on('chat', (packet) => {
+      const translateKey = extractTranslateKey(packet.message);
+      const kind = translateKey ? classifyResponseKey(translateKey) : null;
+
+      if (kind && pendingResponses.length > 0) {
+        const command = pendingResponses.shift();
+        recordResponse(kind, command, translateKey);
+      }
+
       const text = simplifyChatComponent(packet.message);
       if (text.trim()) log(`[chat] ${text}`);
     });
@@ -521,24 +886,123 @@ function start() {
     });
 
     /**
-     * То, ради чего всё затевалось: заполняет очередь командами (или
-     * планирует тестовый /setblock, если commandList === null) - раньше
-     * это делалось прямо в обработчике 'login', теперь только после того,
-     * как waitUntilReadyThenBeginWork ниже подтвердит, что игрок реально
-     * заспавнен (а не висит на экране смерти).
+     * Переключает бота в режим наблюдателя (spectator, id 3) - полёт без
+     * коллизий, не упадёт и не задохнётся при телепорте в толщу камня.
+     * Требует OP; если сервер не подтвердил смену режима (пакет
+     * game_state_change, reason=3) за GAMEMODE_CONFIRM_TIMEOUT_MS -
+     * понятная ошибка вместо тихого зависания.
      */
-    function beginWork() {
+    function ensureSpectatorMode() {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          client.removeListener('game_state_change', onChange);
+          reject(new Error(`Не удалось переключиться в режим наблюдателя (/gamemode 3) за ${GAMEMODE_CONFIRM_TIMEOUT_MS} мс - похоже, у бота нет прав OP.`));
+        }, GAMEMODE_CONFIRM_TIMEOUT_MS);
+
+        function onChange(packet) {
+          if (packet.reason !== 3 || Math.round(packet.gameMode) !== 3) return;
+          clearTimeout(timer);
+          client.removeListener('game_state_change', onChange);
+          resolve();
+        }
+
+        client.on('game_state_change', onChange);
+        const message = '/gamemode 3';
+        client.write('chat', { message });
+        log(`[raw] -> ${message}`);
+      });
+    }
+
+    /**
+     * Телепортирует бота в (x,y,z) через /tp и ждёт подтверждения от
+     * сервера - пакета 'position' (см. §4.5/§10.1.2 - это тот же пакет,
+     * что и в проверке готовности после login). По протоколу 1.12.2
+     * сервер ждёт в ответ 'teleport_confirm' с тем же teleportId - без
+     * него телепорт формально не завершён; raw-клиент (в отличие от
+     * mineflayer) это не делает сам, поэтому отправляем явно. Требует
+     * OP; без подтверждения за TELEPORT_CONFIRM_TIMEOUT_MS - понятная
+     * ошибка.
+     */
+    function teleportTo(x, y, z) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          client.removeListener('position', onPosition);
+          reject(new Error(`Не удалось телепортироваться в (${x}, ${y}, ${z}) за ${TELEPORT_CONFIRM_TIMEOUT_MS} мс - похоже, у бота нет прав OP на /tp.`));
+        }, TELEPORT_CONFIRM_TIMEOUT_MS);
+
+        function onPosition(packet) {
+          clearTimeout(timer);
+          client.removeListener('position', onPosition);
+          client.write('teleport_confirm', { teleportId: packet.teleportId });
+          resolve();
+        }
+
+        client.on('position', onPosition);
+        const message = `/tp ${config.username} ${x} ${y} ${z}`;
+        client.write('chat', { message });
+        log(`[raw] -> ${message}`);
+      });
+    }
+
+    /**
+     * То, ради чего всё затевалось: телепортирует бота на площадку зона
+     * за зоной (см. buildZonePlan) и заполняет очередь командами (или
+     * планирует тестовый /setblock, если commandList === null). Раньше
+     * это делалось прямо в обработчике 'login', теперь только после
+     * того, как waitUntilReadyThenBeginWork подтвердит, что игрок
+     * реально заспавнен (а не висит на экране смерти).
+     */
+    async function beginWork() {
       if (commandList !== null) {
-        const remaining = commandList.slice(sentIndex + 1);
-        if (remaining.length === 0) {
+        if (sentIndex >= commandList.length - 1) {
           log('[raw] Схема уже полностью отправлена - завершаю работу.');
           process.exit(0);
           return;
         }
+
+        try {
+          await ensureSpectatorMode();
+        } catch (err) {
+          // Если соединение уже разорвано (а не просто "нет OP") - это не
+          // фатальная ошибка, а обычный разрыв: handleDisconnect уже
+          // поставил переподключение в очередь, здесь просто выходим,
+          // не трогая мёртвый client и не завершая процесс.
+          if (disconnectHandled) return;
+          console.error(`[raw] ОШИБКА: ${err.message}`);
+          process.exit(1);
+          return;
+        }
+        if (disconnectHandled) return;
+
+        // "Связь восстановлена" имеет смысл сказать один раз за весь
+        // beginWork (т.е. один раз на успешный login) - если написать это
+        // внутри цикла по зонам, сообщение будет всплывать на КАЖДОМ
+        // переходе к следующей зоне, даже без единого разрыва соединения.
         if (sentIndex >= 0) {
           log(`[raw] Связь восстановлена, продолжаю с команды ${sentIndex + 2} из ${commandList.length}.`);
         }
-        remaining.forEach((cmd) => commands.enqueue(cmd));
+
+        for (const zone of zones) {
+          if (disconnectHandled) return;
+          if (sentIndex >= zone.endIndex) continue; // зона уже вся отправлена (после переподключения)
+
+          try {
+            await teleportTo(zone.centerX, zone.y, zone.centerZ);
+          } catch (err) {
+            if (disconnectHandled) return; // см. комментарий выше про ensureSpectatorMode
+            console.error(`[raw] ОШИБКА: ${err.message}`);
+            process.exit(1);
+            return;
+          }
+          if (disconnectHandled) return;
+          await sleep(config.tpChunkLoadWaitMs);
+          if (disconnectHandled) return;
+
+          const resumeFrom = Math.max(zone.startIndex, sentIndex + 1);
+          for (let i = resumeFrom; i <= zone.endIndex; i++) commands.enqueue(commandList[i]);
+
+          await waitUntil(() => disconnectHandled || sentIndex >= zone.endIndex, null);
+        }
         return;
       }
 

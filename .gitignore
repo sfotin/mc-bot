@@ -12,6 +12,7 @@ config.local.json
 *.log
 build.log
 npm-debug.log*
+logs/
 
 # Сырые файлы региона сервера (десятки МБ, снимаются заново по запросу -
 # см. BOT.md/tools/terrain/); в git идёт только обработанный результат
