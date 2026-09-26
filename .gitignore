@@ -22,6 +22,8 @@ logs/
 # Кэш
 .cache/
 .npm/
+__pycache__/
+*.pyc
 
 # Файлы ОС/редакторов
 .DS_Store
