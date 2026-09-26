@@ -213,6 +213,12 @@ def support_rule(name, meta):
     if bare == 'waterlily':
         return (0, -1, 0, 'water')
 
+    if bare == 'cocoa':
+        # биты 0-1 - facing (0 юг, 1 запад, 2 север, 3 восток) = направление К стволу;
+        # биты 2-3 - возраст. Опора - тропическое бревно (log:3/7/11) по направлению facing.
+        dx, dz = {0: (0, 1), 1: (-1, 0), 2: (0, -1), 3: (1, 0)}[meta & 3]
+        return (dx, 0, dz, 'jungle_log')
+
     if bare in BELOW_SUPPORT_NAMES:
         return (0, -1, 0, 'solid')
 
@@ -405,6 +411,15 @@ def check_supports(schema, file_order, terrain):
         skey = (x + dx, y + dy, z + dz)
         in_schema = skey in schema
         support_bare = _bare(parse_block(schema[skey] if in_schema else terrain(*skey))[0])
+
+        if required == 'jungle_log':
+            sname, smeta = parse_block(schema[skey] if in_schema else terrain(*skey))
+            if not (_bare(sname) == 'log' and (smeta & 3) == 3):
+                errors.append(f'({x},{y},{z}) {name}: какао держится только на тропическом бревне '
+                              f'(log:3), а в {skey} - {sname}:{smeta}')
+            elif in_schema and send.get(skey, -1) > send.get((x, y, z), -1):
+                errors.append(f'({x},{y},{z}) {name}: бревно-опора {skey} ставится позже')
+            continue
 
         if required == 'water':
             if in_schema and support_bare == 'water':
