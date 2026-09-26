@@ -7,6 +7,11 @@ DECOR.md не исправляются - только сообщаются (см
 
 Запуск:
     python3 tools/decor/decor_check.py [--file docs/DECOR.md]
+    python3 tools/decor/decor_check.py --schema schemas/house.json [--terrain below|y0]
+        - проверить любую готовую схему (вода, опоры, пары, падающие блоки)
+
+Порядок постройки проверяется по реальному порядку отправки команд ботом
+(tools/decor/send_order.js -> lib/fill-plan.js), нужны node и node_modules.
 """
 import argparse
 import json
@@ -50,11 +55,26 @@ def find_elements(text):
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--file', default=DEFAULT_DECOR_MD)
+    p.add_argument('--schema', help='проверить один JSON-файл схемы вместо DECOR.md')
+    p.add_argument('--terrain', default='below', choices=['below', 'y0'])
     return p.parse_args()
+
+
+def check_schema_file(path, terrain_kind):
+    with open(path, encoding='utf-8') as f:
+        entries = json.load(f)
+    schema, order = dl.entries_to_schema(entries)
+    terrain = dl.make_terrain(terrain_kind)
+    errors = dl.check_water(schema, terrain)
+    support_errors, warnings = dl.check_supports(schema, order, terrain)
+    n = dl.report(schema, order, errors + support_errors, warnings, label=path)
+    sys.exit(1 if n else 0)
 
 
 def main():
     args = parse_args()
+    if args.schema:
+        check_schema_file(args.schema, args.terrain)
     with open(args.file, encoding='utf-8') as f:
         text = f.read()
 

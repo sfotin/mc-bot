@@ -161,9 +161,13 @@ def check_water(schema, terrain):
 # check_supports - опоры
 # ------------------------------------------------------------------
 
-# торч/кнопки/рычаг: metadata = "сторона крепления" НАПРЯМУЮ (BOT.md §6.4) -
-# компас 1-4 = восток,запад,юг,север - это и есть направление к опоре.
-_DIR4 = {1: (1, 0), 2: (-1, 0), 3: (0, 1), 4: (0, -1)}
+# торч/кнопки/рычаг на стене: metadata 1-4 = КУДА СМОТРИТ блок (1 восток,
+# 2 запад, 3 юг, 4 север), опора - С ОБРАТНОЙ стороны (torch:1 висит на
+# восточной грани блока, стоящего западнее). Проверено на схемах, которые
+# стояли на сервере: house.json (torch:3/torch:4), npp-final.json
+# (stone_button:3) - опора везде с обратной стороны. Раньше здесь было
+# направление "как есть" (по старой формулировке BOT.md §6.4) - это был баг.
+_DIR4 = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
 # ladder/wall_sign (DECOR.md §1): metadata = КУДА СМОТРИТ блок (facing), опора -
 # С ОБРАТНОЙ стороны (2 север,3 юг,4 запад,5 восток - facing; опора наоборот).
 _LADDER_DIR = {2: (0, 1), 3: (0, -1), 4: (1, 0), 5: (-1, 0)}
@@ -219,6 +223,7 @@ def support_rule(name, meta):
         return (0, -1, 0, 'solid') if meta < 8 else None
 
     if bare in ('stone_button', 'wooden_button'):
+        meta = meta & 7  # бит 8 - "нажата"
         if meta == 5:
             return (0, -1, 0, 'solid')
         if meta == 0:
@@ -229,6 +234,11 @@ def support_rule(name, meta):
         return None
 
     if bare == 'lever':
+        meta = meta & 7  # бит 8 - "включён"
+        if meta in (5, 6):
+            return (0, -1, 0, 'solid')   # на полу
+        if meta in (0, 7):
+            return (0, 1, 0, 'solid')    # на потолке
         if meta in _DIR4:
             dx, dz = _DIR4[meta]
             return (dx, 0, dz, 'solid')
@@ -277,9 +287,42 @@ def _pair_info(name, meta):
     return None
 
 
-def _check_pairs(schema, file_order):
-    errors = []
-    index_of = {k: i for i, k in enumerate(file_order)}
+SEND_ORDER_JS = os.path.join(_HERE, 'send_order.js')
+
+
+def read_falling_block_names(fill_plan_path=None):
+    return _read_js_set('FALLING_BLOCK_NAMES', fill_plan_path)
+
+
+def get_send_order(schema, file_order):
+    """
+    Реальный порядок отправки команд ботом: пишет схему во временный файл
+    в порядке file_order и вызывает node tools/decor/send_order.js (он зовёт
+    buildFillCommands из lib/fill-plan.js - логика движка не дублируется).
+    Возвращает dict {(x,y,z): номер_команды}. Клетки одной команды (/fill)
+    получают один номер - они встают одновременно.
+    """
+    import subprocess
+    import tempfile
+    entries = [{'x': k[0], 'y': k[1], 'z': k[2], 'block': schema[k]} for k in file_order]
+    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(entries, f)
+        tmp = f.name
+    try:
+        out = subprocess.run(['node', SEND_ORDER_JS, tmp], capture_output=True, text=True,
+                             encoding='utf-8', check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        detail = getattr(e, 'stderr', '') or str(e)
+        raise RuntimeError('не удалось получить порядок отправки через node send_order.js '
+                           '(нужны node и node_modules репозитория, `npm install`): ' + detail)
+    finally:
+        os.unlink(tmp)
+    data = json.loads(out)
+    return {tuple(int(v) for v in key.split(',')): idx for key, idx in data['order'].items()}
+
+
+def _check_pairs(schema, send):
+    errors, warnings = [], []
     for (x, y, z), spec in schema.items():
         name, meta = parse_block(spec)
         info = _pair_info(name, meta)
@@ -294,32 +337,64 @@ def _check_pairs(schema, file_order):
         if top_spec is None:
             errors.append(f'({x},{y},{z}) {name}: нет пары ({low_label} без {label} в {top_key})')
             continue
-
         top_name, top_meta = parse_block(top_spec)
-        top_bare = _bare(top_name)
-        expect_bare = _bare(name)
-        ok_type = (top_bare == expect_bare) and (
+        ok_type = (_bare(top_name) == _bare(name)) and (
             (kind == 'bed' and top_meta == meta + 8) or (kind != 'bed' and top_meta >= 8)
         )
         if not ok_type:
             errors.append(f'({x},{y},{z}) {name}: в {top_key} не {label} ({top_spec})')
             continue
 
-        i_low = index_of.get((x, y, z))
-        i_top = index_of.get(top_key)
+        i_low, i_top = send.get((x, y, z)), send.get(top_key)
         if i_low is None or i_top is None:
             continue
-        if i_top != i_low + 1:
-            errors.append(f'({x},{y},{z}) {name}: {label} не сразу после {low_label} в файле (индексы {i_low},{i_top})')
+        if kind in ('door', 'bed'):
+            if i_top != i_low + 1:
+                errors.append(f'({x},{y},{z}) {name}: {label} не следующей командой после '
+                              f'{low_label} (команды {i_low} и {i_top})')
+        else:  # double_plant
+            neigh = {(x + a, y + b, z + c) for a, b, c in
+                     ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0))}
+            hit = [k for k in neigh if k in send and i_low < send[k] < i_top]
+            if hit:
+                warnings.append(f'({x},{y},{z}) {name}: между низом (команда {i_low}) и верхом '
+                                f'({i_top}) ставятся соседи {sorted(hit)} - низ сирени может '
+                                f'отвалиться до установки верха')
+    return errors, warnings
+
+
+def _check_falling(schema, send, terrain):
+    """Падающие блоки: опора снизу - твёрдая и ставится раньше или той же командой."""
+    errors = []
+    falling = read_falling_block_names()
+    attached_names = read_attached_block_names()
+    liquid_names = read_liquid_block_names()
+    for (x, y, z), spec in schema.items():
+        name, _m = parse_block(spec)
+        if _bare(name) not in falling:
+            continue
+        skey = (x, y - 1, z)
+        if skey not in schema:
+            if _is_air(terrain(*skey)):
+                errors.append(f'({x},{y},{z}) {name}: падающий блок без опоры (под ним воздух)')
+            continue
+        sname = parse_block(schema[skey])[0]
+        sb = _bare(sname)
+        if sb == 'air' or sb in liquid_names or is_attached_block(sname, attached_names):
+            errors.append(f'({x},{y},{z}) {name}: под падающим блоком не твёрдое ({schema[skey]})')
+        elif send.get(skey, -1) > send.get((x, y, z), -1):
+            errors.append(f'({x},{y},{z}) {name}: опора {skey} ставится позже '
+                          f'(команда {send[skey]} > {send[(x, y, z)]}) - блок упадёт')
     return errors
 
 
 def check_supports(schema, file_order, terrain):
-    """Возвращает (errors, warnings) - списки строк."""
-    errors = []
-    warnings = []
-    attached_names = read_attached_block_names()
-    index_of = {k: i for i, k in enumerate(file_order)}
+    """
+    Возвращает (errors, warnings). Порядок проверяется по РЕАЛЬНОМУ порядку
+    отправки команд ботом (get_send_order), а не по порядку файла.
+    """
+    errors, warnings = [], []
+    send = get_send_order(schema, file_order)
 
     for (x, y, z), spec in schema.items():
         name, meta = parse_block(spec)
@@ -328,36 +403,31 @@ def check_supports(schema, file_order, terrain):
             continue
         dx, dy, dz, required = rule
         skey = (x + dx, y + dy, z + dz)
-        support_from_schema = skey in schema
-        support_spec = schema[skey] if support_from_schema else terrain(*skey)
-        support_bare = _bare(parse_block(support_spec)[0]) if support_from_schema else _bare(support_spec)
+        in_schema = skey in schema
+        support_bare = _bare(parse_block(schema[skey] if in_schema else terrain(*skey))[0])
 
         if required == 'water':
-            if support_from_schema and support_bare == 'water':
-                warnings.append(
-                    f'({x},{y},{z}) {name}: опора (вода в {skey}) - в текущем движке бота вода '
-                    f'идёт отдельным финальным проходом ПОСЛЕ этого блока (см. BOT.md §4.4/§10.4.8) - '
-                    f'до доработки бота может отвалиться'
-                )
+            if in_schema and support_bare == 'water':
+                if send.get(skey, -1) > send.get((x, y, z), -1):
+                    warnings.append(
+                        f'({x},{y},{z}) {name}: вода-опора {skey} ставится ботом позже '
+                        f'(финальный проход воды, BOT.md §4.4) - до доработки бота может отвалиться')
             else:
                 errors.append(f'({x},{y},{z}) {name}: нужна вода в {skey}, а там {support_bare}')
             continue
 
-        # required == 'solid'
-        if support_bare in ('air', 'water'):
+        if support_bare in ('air', 'water', 'lava') or (
+                in_schema and is_attached_block(parse_block(schema[skey])[0])):
             errors.append(f'({x},{y},{z}) {name}: нет опоры в {skey} ({support_bare})')
             continue
+        if in_schema and send.get(skey, -1) > send.get((x, y, z), -1):
+            errors.append(f'({x},{y},{z}) {name}: опора {skey} ставится позже '
+                          f'(команда {send[skey]} > {send[(x, y, z)]})')
 
-        if support_from_schema and not is_attached_block(name, attached_names):
-            i_self = index_of.get((x, y, z))
-            i_sup = index_of.get(skey)
-            if i_self is not None and i_sup is not None and i_sup > i_self:
-                errors.append(
-                    f'({x},{y},{z}) {name}: опора {skey} стоит позже в файле '
-                    f'(индекс {i_sup} > {i_self}) - бот ставит этот блок твёрдым проходом'
-                )
-
-    errors.extend(_check_pairs(schema, file_order))
+    e, w = _check_pairs(schema, send)
+    errors.extend(e)
+    warnings.extend(w)
+    errors.extend(_check_falling(schema, send, terrain))
     return errors, warnings
 
 
