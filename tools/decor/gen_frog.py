@@ -19,7 +19,8 @@ import decor_lib as dl  # noqa: E402
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-LEGEND_IN = {'G': 'wool:13', 'W': 'wool:0', 'B': 'wool:15', 'P': 'wool:6', '~': 'water'}
+LEGEND_IN = {'G': 'wool:13', 'W': 'wool:0', 'B': 'wool:15', 'P': 'wool:6', '~': 'water',
+             'F': 'flowing_water:0'}  # F - источник во рту: спокойная water повисла бы (DECOR.md «Опыт»)
 
 # план по слоям (ЛОКАЛЬНЫЕ координаты, до сдвига по X): y -> {z: "строка по x=0..6"}
 LAYERS = {
@@ -30,7 +31,7 @@ LAYERS = {
     3: {0: '.GGGGG.', 1: '.GGGGG.', 2: '.GGGGG.', 3: '.GGGGG.', 4: '..G.G..'},
     4: {0: '.GGGGG.', 1: '.GGGGG.', 2: '.GGGGG.', 3: '.GGGGG.', 4: '..G.G..'},
     5: {0: '.GGGGG.', 1: '.GGGGG.', 2: '.GGGGG.', 3: '.GGGGG.', 4: '..G.G..'},
-    6: {0: 'GGGGGGG', 1: 'GGGGGGG', 2: 'GGGGGGG', 3: 'GGGGGGG', 4: 'GGG~GGG'},
+    6: {0: 'GGGGGGG', 1: 'GGGGGGG', 2: 'GGGGGGG', 3: 'GGGGGGG', 4: 'GGGFGGG'},
     7: {0: 'GGGGGGG', 1: 'GGGGGGG', 2: 'GGGGGGG', 3: 'GGGGGGG', 4: 'PGGGGGP'},
     8: {0: 'GGGGGGG', 1: 'GGGGGGG', 2: 'GGGGGGG', 3: 'GGGGGGG', 4: 'WBGGGBW'},
     9: {3: 'WW...WW', 4: 'WW...WW'},
@@ -60,7 +61,7 @@ WATERLILIES = [(4, 6, 1, 'waterlily'), (6, 6, 1, 'waterlily')]
 EXPECTED = {
     'entries': 280,
     'counts': {
-        'wool:13': 228, 'water': 21, 'wool:0': 10, 'red_flower:8': 3, 'red_flower:0': 3,
+        'wool:13': 228, 'water': 20, 'flowing_water:0': 1, 'wool:0': 10, 'red_flower:8': 3, 'red_flower:0': 3,
         'tallgrass:1': 3, 'wool:6': 2, 'wool:15': 2, 'double_plant:1': 2, 'double_plant:8': 2,
         'red_flower:7': 2, 'waterlily': 2,
     },
@@ -100,8 +101,10 @@ def main():
     dl.save(cells, args.out, order)
 
     terrain = dl.make_terrain('y0')
-    water_errors = dl.check_water(cells, terrain)
+    water_warnings = []
+    water_errors = dl.check_water(cells, terrain, water_warnings)
     support_errors, support_warnings = dl.check_supports(cells, order, terrain)
+    support_warnings = water_warnings + support_warnings
     errors = water_errors + support_errors
 
     err_count = dl.report(cells, order, errors, support_warnings, label=f'лягушка-водопад -> {args.out}')

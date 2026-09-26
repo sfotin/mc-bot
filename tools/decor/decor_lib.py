@@ -125,35 +125,49 @@ def _is_water_name(bare):
 # check_water - правило 1.12 для воды
 # ------------------------------------------------------------------
 
-def check_water(schema, terrain):
-    """Возвращает список строк-ошибок (без предупреждений - тут их не бывает)."""
+def check_water(schema, terrain, warnings=None):
+    """
+    Возвращает список строк-ошибок. Правило 1.12 (DECOR.md §0, «Опыт»):
+    - `water` (спокойная вода) после /fill или /setblock НЕ течёт, пока рядом
+      ничего не изменится. Годится для бассейнов; `water` над воздухом повиснет -
+      это ошибка (для струй нужен `flowing_water:0`).
+    - `flowing_water:0` сразу начинает течь. Если под ним воздух - струя должна
+      упасть в воду схемы (иначе ошибка). Если под ним опора - это задуманный
+      каскад: растекание не моделируется, в warnings (если передан список)
+      пишется предупреждение «каскад - поведение подтверждается на сервере».
+    """
     errors = []
     for (x, y, z), spec in schema.items():
         name, _meta = parse_block(spec)
-        if _bare(name) != 'water':
-            continue
-
-        below = block_at(schema, terrain, x, y - 1, z)
-        if _is_air(below):
-            # струя падает - ищем первый не-воздух ниже
+        bare = _bare(name)
+        if bare == 'flowing_water':
+            below = block_at(schema, terrain, x, y - 1, z)
+            if not _is_air(below):
+                if warnings is not None:
+                    warnings.append(f'({x},{y},{z}) flowing_water: каскад от свободного источника - '
+                                    f'растекание не моделируется, поведение подтверждается на сервере')
+                continue
             cy = y - 1
-            cell_name = 'air'
             while True:
                 cy -= 1
-                cell = block_at(schema, terrain, x, cy, z)
-                cell_name = _bare(parse_block(cell)[0])
+                cell_name = _bare(parse_block(block_at(schema, terrain, x, cy, z))[0])
                 if cell_name != 'air':
                     break
-            if cell_name != 'water':
-                errors.append(
-                    f'({x},{y},{z}) water: струя падает на твёрдое и растечётся '
-                    f'(первый не-воздух на ({x},{cy},{z}) - {cell_name})'
-                )
-        else:
-            for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                n = block_at(schema, terrain, x + dx, y, z + dz)
-                if _is_air(n):
-                    errors.append(f'({x},{y},{z}) water: утечка в направлении ({dx},0,{dz})')
+            if cell_name not in ('water', 'flowing_water'):
+                errors.append(f'({x},{y},{z}) flowing_water: струя падает на твёрдое и растечётся '
+                              f'(первый не-воздух на ({x},{cy},{z}) - {cell_name})')
+            continue
+        if bare != 'water':
+            continue
+        if _is_air(block_at(schema, terrain, x, y - 1, z)):
+            errors.append(f'({x},{y},{z}) water: спокойная вода над воздухом повиснет '
+                          f'(после /fill не течёт) - для струи нужен flowing_water:0')
+            continue
+
+        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = block_at(schema, terrain, x + dx, y, z + dz)
+            if _is_air(n):
+                errors.append(f'({x},{y},{z}) water: утечка в направлении ({dx},0,{dz})')
     return errors
 
 

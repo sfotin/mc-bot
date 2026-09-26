@@ -20,8 +20,8 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 PALETTES = {
-    'stone': {'S': 'stonebrick', 'C': 'stonebrick:3', 's': 'stone_slab:5', 'D': 'stonebrick'},
-    'med': {'S': 'quartz_block', 'C': 'quartz_block:2', 's': 'stone_slab:7', 'D': 'double_stone_slab:9'},
+    'stone': {'S': 'stonebrick', 'C': 'stonebrick:3', 's': 'stone_slab:5', 'u': 'stone_slab:13', 'D': 'stonebrick'},
+    'med': {'S': 'quartz_block', 'C': 'quartz_block:2', 's': 'stone_slab:7', 'u': 'stone_slab:15', 'D': 'double_stone_slab:9'},
 }
 STAIR_BLOCK = {'stone': 'stone_brick_stairs', 'med': 'quartz_stairs'}
 
@@ -118,11 +118,12 @@ def build_core(pal, ox=0, oy=0, oz=0):
             put(x, 5, z, pal['S'] if rim(mask5, x, z) else 'water')
 
     # струи со средней чаши
+    # (flowing_water:0 - спокойная water над воздухом повисла бы, DECOR.md «Опыт»)
     for x, z in JET_MID:
-        put(x, 5, z, 'water')
+        put(x, 5, z, 'flowing_water:0')
     # струи с макушки колонны в кольцо средней чаши
     for x, z in JET_INNER:
-        put(x, 7, z, 'water')
+        put(x, 7, z, 'flowing_water:0')
 
     # козырьки над струями макушки + макушка
     for x, z in JET_INNER:
@@ -132,6 +133,46 @@ def build_core(pal, ox=0, oy=0, oz=0):
     put(4, 10, 4, pal['s'])
 
     return cells
+
+
+def as_built_13(cells, pal, stair_block, shift_x, shift_y, shift_z):
+    """
+    Фонтан 13x13 «как построено на сервере» (v2, DECOR.md §5.2): переделки
+    пользователя поверх исходного проекта (ядро 9x9 + кольцо со ступеньками).
+    - вся вода убрана; вместо неё один источник flowing_water:0 на верхней плите
+      (над стеклом) - каскадом заполняет чаши и канал;
+    - нижний ярус: дно ядра (y=1) - цельные блоки S вместо D (подсветка на месте),
+      борт ядра (y=2) и плиты-края (y=3) убраны - ядро стало плоской площадкой
+      в 1 блок; ступеньки внешнего борта канала заменены нижними плитами s;
+    - средний ярус - «чаша» из плит: диск (y=5) - верхние плиты u (кроме центра
+      под колонной - там S, как было), борт (y=6) - нижние плиты s;
+    - верхний ярус (козырьки, фонарь, стекло, плита) не менялся.
+    """
+    out = {}
+    for (x, y, z), b in cells.items():
+        if _bare_name(b) in ('water', 'flowing_water'):
+            continue
+        lx, ly, lz = x - shift_x, y - shift_y, z - shift_z   # локальные координаты ядра
+        in_core = oct9(lx, lz)
+        if b.startswith(stair_block + ':'):
+            b = pal['s']
+        elif in_core and ly == 0 and b == pal['D']:
+            b = pal['S']
+        elif in_core and ly in (1, 2) and rim(oct9, lx, lz):
+            continue                       # борт и плиты-края ядра убраны
+        elif ly == 4 and mask5(lx, lz) and (lx, lz) != (4, 4):
+            b = pal['u']
+        elif ly == 5 and mask5(lx, lz) and rim(mask5, lx, lz):
+            b = pal['s']
+        out[(x, y, z)] = b
+    top_slab = (4 + shift_x, 10 + shift_y, 4 + shift_z)
+    assert out[top_slab] == pal['s']
+    out[(top_slab[0], top_slab[1] + 1, top_slab[2])] = 'flowing_water:0'
+    return out
+
+
+def _bare_name(spec):
+    return spec.split(':')[0]
 
 
 def core_footprint_global(x, z, shift_x, shift_z):
@@ -175,16 +216,16 @@ def build_ring(pal, stair_block, shift_x, shift_z):
 EXPECTED = {
     (9, 'stone'): {
         'entries': 223,
-        'counts': {'stonebrick': 122, 'water': 60, 'stone_slab:5': 29, 'stonebrick:3': 6,
-                   'sea_lantern': 5, 'stained_glass:3': 1},
+        'counts': {'stonebrick': 122, 'water': 52, 'flowing_water:0': 8, 'stone_slab:5': 29,
+                   'stonebrick:3': 6, 'sea_lantern': 5, 'stained_glass:3': 1},
         'size': (9, 11, 9),
     },
     (13, 'med'): {
-        'entries': 448,
-        'counts': {'double_stone_slab:9': 202, 'water': 104, 'quartz_block': 57, 'stone_slab:7': 29,
-                   'sea_lantern': 13, 'quartz_stairs:2': 13, 'quartz_stairs:3': 13,
-                   'quartz_block:2': 6, 'quartz_stairs:0': 5, 'quartz_stairs:1': 5, 'stained_glass:3': 1},
-        'size': (13, 12, 13),
+        # v2 «как построено на сервере» (DECOR.md §5.2), см. as_built_13
+        'entries': 297,
+        'counts': {'double_stone_slab:9': 137, 'quartz_block': 66, 'stone_slab:7': 53, 'stone_slab:15': 20,
+                   'sea_lantern': 13, 'quartz_block:2': 6, 'stained_glass:3': 1, 'flowing_water:0': 1},
+        'size': (13, 13, 13),
     },
 }
 
@@ -209,6 +250,7 @@ def main():
         cells = build_core(pal, ox=shift_x, oy=shift_y, oz=shift_z)
         ring = build_ring(pal, STAIR_BLOCK[args.palette], shift_x, shift_z)
         cells.update(ring)  # кольцо не трогает клетки ядра (см. build_ring: core_footprint_global пропускается)
+        cells = as_built_13(cells, pal, STAIR_BLOCK[args.palette], shift_x, shift_y, shift_z)
 
     order = dl.compute_order(cells)
 
@@ -217,8 +259,10 @@ def main():
     dl.save(cells, out_path, order)
 
     terrain = dl.make_terrain('y0')
-    water_errors = dl.check_water(cells, terrain)
+    water_warnings = []
+    water_errors = dl.check_water(cells, terrain, water_warnings)
     support_errors, support_warnings = dl.check_supports(cells, order, terrain)
+    support_warnings = water_warnings + support_warnings
     errors = water_errors + support_errors
 
     label = f'фонтан {args.size}x{args.size} ({args.palette}) -> {out_path}'
@@ -239,6 +283,7 @@ def main():
     if args.plan:
         legend = {v: k for k, v in pal.items()}
         legend['water'] = '~'
+        legend['flowing_water:0'] = 'F'
         legend['sea_lantern'] = 'L'
         legend['stained_glass:3'] = 'g'
         if args.size == 13:

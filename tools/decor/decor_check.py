@@ -65,8 +65,10 @@ def check_schema_file(path, terrain_kind):
         entries = json.load(f)
     schema, order = dl.entries_to_schema(entries)
     terrain = dl.make_terrain(terrain_kind)
-    errors = dl.check_water(schema, terrain)
+    water_warnings = []
+    errors = dl.check_water(schema, terrain, water_warnings)
     support_errors, warnings = dl.check_supports(schema, order, terrain)
+    warnings = water_warnings + warnings
     n = dl.report(schema, order, errors + support_errors, warnings, label=path)
     sys.exit(1 if n else 0)
 
@@ -99,9 +101,10 @@ def main():
             continue
 
         schema, order = dl.entries_to_schema(entries)
-        has_water = any(dl.parse_block(b)[0] == 'water' for b in schema.values())
-        errors = dl.check_water(schema, terrain) if has_water else []
+        water_warnings = []
+        errors = dl.check_water(schema, terrain, water_warnings)
         support_errors, warnings = dl.check_supports(schema, order, terrain)
+        warnings = water_warnings + warnings
         errors = errors + support_errors
 
         err_count = dl.report(schema, order, errors, warnings, label=label)
