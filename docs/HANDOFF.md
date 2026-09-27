@@ -51,4 +51,4 @@
 
 ## 5. Построенные схемы района (запуск — BOT.md §9)
 
-Набережная: `embankment-1`, `1d` (1b/1c перекрыты), `2`, фонтан `decor-fountain-13-med`, `3`, `4`. Мыс: `cape-1`, `cape-2-5-build` (включает fix-2, fix-3). Старый город: `oldtown-1`, `oldtown-2`. Генераторы — `tools/city/gen_*.py`, превью — `docs/districts/`.
+Набережная: `embankment-1`, `1d` (1b/1c перекрыты), `2`, фонтан `decor-fountain-13-med`, `3`, `4`. Мыс: `cape-1`, `cape-2-5-build` (включает fix-2, fix-3). Старый город: `oldtown-1`, `oldtown-2`, `oldtown-1-fix-1`. Генераторы — `tools/city/gen_*.py`, превью — `docs/districts/`.
