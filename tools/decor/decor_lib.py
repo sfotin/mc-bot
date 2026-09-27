@@ -16,7 +16,7 @@ import json
 import os
 import re
 import sys
-from collections import Counter
+from collections import Counter, deque
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_FILL_PLAN_PATH = os.path.normpath(os.path.join(_HERE, '..', '..', 'lib', 'fill-plan.js'))
@@ -458,6 +458,214 @@ def check_supports(schema, file_order, terrain):
     warnings.extend(w)
     errors.extend(_check_falling(schema, send, terrain))
     return errors, warnings
+
+
+# ------------------------------------------------------------------
+# check_bench_front - место для ног перед скамейкой/креслом/диваном
+# (DECOR.md §2.4/§3.3, BOT.md §12): найдено на сервере дважды - скамейку
+# ставили вплотную к парапету/перилам, сидящему некуда деть ноги.
+# ------------------------------------------------------------------
+
+# metadata сиденья (birch/oak/spruce_stairs, DECOR.md §3.3) - КУДА СМОТРИТ
+# сидящий (не путать со стандартной ориентацией ступенек-лестницы):
+# 0 запад, 1 восток, 2 север, 3 юг.
+_SEAT_FACING = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
+
+
+def _find_seats(schema):
+    """Находит ступеньки-сиденья: цепочка одинаковых `*_stairs:0..3` в ряд,
+    с открытым люком (подлокотник, DECOR.md §2.4/§3.3) на обоих концах ряда.
+    Возвращает список (x,y,z,dx,dz) - dx,dz - куда смотрит сидящий."""
+    seats = []
+    for (x, y, z), spec in schema.items():
+        name, meta = parse_block(spec)
+        bare = _bare(name)
+        if not bare.endswith('_stairs') or meta not in _SEAT_FACING:
+            continue
+        dx, dz = _SEAT_FACING[meta]
+        row = (0, 1) if dx else (1, 0)  # ряд перпендикулярен взгляду сидящего
+
+        def end_is_armrest(sign):
+            cx, cz = x, z
+            for _ in range(6):
+                cx += row[0] * sign
+                cz += row[1] * sign
+                spec2 = schema.get((cx, y, cz))
+                if spec2 is None:
+                    return False
+                n2, m2 = parse_block(spec2)
+                if _bare(n2) == 'trapdoor':
+                    return True
+                if _bare(n2) == bare and m2 == meta:
+                    continue
+                return False
+            return False
+
+        if end_is_armrest(1) and end_is_armrest(-1):
+            seats.append((x, y, z, dx, dz))
+    return seats
+
+
+def check_bench_front(schema, terrain):
+    """
+    Возвращает список строк-ошибок. Перед сиденьем (в сторону, куда смотрит
+    сидящий) на той же высоте должна быть свободная клетка - не парапет,
+    не перила, не стена. Ступенька вниз в клетке ниже допустима (её эта
+    проверка не смотрит - именно поэтому клетка "перед" считается годной,
+    даже если дальше пол ниже на 1).
+    """
+    errors = []
+    for x, y, z, dx, dz in _find_seats(schema):
+        fx, fz = x + dx, z + dz
+        front = block_at(schema, terrain, fx, y, fz)
+        bare = _bare(parse_block(front)[0])
+        if not _is_open(bare):
+            errors.append(f'({x},{y},{z}) сиденье: перед ним в ({fx},{y},{fz}) - {front} '
+                          f'(нет места для ног - парапет/перила/стена)')
+    return errors
+
+
+# ------------------------------------------------------------------
+# walk_reachable / reached - проходимость «как ходит игрок» (BOT.md §12):
+# 1x1 в плане, голова 1.8 (клетка ног + большая часть клетки над ней), шаг
+# между соседними колонками <= max_step (полублоки/ступеньки - можно, целый
+# блок вверх без стремянки - нельзя, т.е. без прыжков), спуск не ограничен
+# (падение), стремянки (`ladder`) - подъём/спуск по колонке в обход max_step.
+# Точнее старого простого валидатора (dy in -1..1 в gen_embankment_2.py и
+# др. - тот допускал прыжок на целый блок вверх); используется там, где
+# нужно проверить именно пешеходную доступность без прыжков (мыс, здания).
+# ------------------------------------------------------------------
+
+_OPEN_BARE = {
+    'air', 'water', 'flowing_water', 'carpet', 'tripwire', 'tripwire_hook',
+    'torch', 'redstone_torch', 'unlit_redstone_torch',
+    'wall_sign', 'standing_sign', 'ladder', 'vine',
+    'tallgrass', 'deadbush', 'sapling', 'red_flower', 'yellow_flower', 'double_plant',
+    'wooden_button', 'stone_button', 'lever',
+    'wooden_pressure_plate', 'stone_pressure_plate',
+    'light_weighted_pressure_plate', 'heavy_weighted_pressure_plate',
+    'wooden_door', 'iron_door', 'fence_gate', 'trapdoor', 'iron_trapdoor',
+    'rail', 'golden_rail', 'detector_rail', 'activator_rail', 'end_rod', 'string',
+}
+
+
+def _is_open(bare):
+    return bare in _OPEN_BARE
+
+
+def _is_half_step(bare):
+    return bare.endswith('_stairs') or (bare.endswith('_slab') and not bare.startswith('double_'))
+
+
+def _is_top_half(bare, meta):
+    """Верхняя половина одинарной плиты (бит 0x8) - по проходимости как целый
+    блок (верх на y+1). Перевёрнутые ступеньки (бит 0x4) этой функцией не
+    различаются - в проекте на пешеходных маршрутах не используются."""
+    return bare.endswith('_slab') and not bare.startswith('double_') and meta >= 8
+
+
+def _column_kind(spec):
+    """'open'|'half'|'solid' для клетки по блоку - без учёта соседей."""
+    name, meta = parse_block(spec)
+    bare = _bare(name)
+    if _is_open(bare):
+        return 'open'
+    if _is_half_step(bare) and not _is_top_half(bare, meta):
+        return 'half'
+    return 'solid'
+
+
+def _stand_ok(block_fn, x, y, z, s):
+    """Можно ли стоять ногами на высоте y+0.5*s в столбце (x,z)?
+    s=0: опора - целый блок в (x,y-1,z), тело - клетки (x,y,z) и (x,y+1,z).
+    s=1: опора - полублок/ступенька в (x,y,z), тело - (x,y+1,z) и (x,y+2,z)."""
+    if s == 0:
+        if _column_kind(block_fn(x, y - 1, z)) != 'solid':
+            return False
+        return (_column_kind(block_fn(x, y, z)) == 'open'
+                and _column_kind(block_fn(x, y + 1, z)) != 'solid')
+    if _column_kind(block_fn(x, y, z)) != 'half':
+        return False
+    return (_column_kind(block_fn(x, y + 1, z)) == 'open'
+            and _column_kind(block_fn(x, y + 2, z)) != 'solid')
+
+
+def _is_ladder(block_fn, x, y, z):
+    return _bare(parse_block(block_fn(x, y, z))[0]) == 'ladder'
+
+
+def _is_stairs(block_fn, x, y, z):
+    return _bare(parse_block(block_fn(x, y, z))[0]).endswith('_stairs')
+
+
+def walk_reachable(block_fn, start, xr, zr, yr, max_step=0.5):
+    """
+    block_fn(x,y,z) -> "имя[:meta]" (итоговая схема - вызывающий сам решает,
+    брать блок из схемы или из рельефа, см. `final`/`terrain_rel` в
+    генераторах). start - (x,y,z) целые, y - клетка под ногами игрока (s=0),
+    доверяется без проверки (вызывающий сам ручается, что там можно стоять -
+    например, там дверь или люк). xr,zr,yr - (min,max) включительно.
+
+    Возвращает dict {(x,y,z): {0,1} или {0} или {1}} - какие доли (s=0 - на
+    y, s=1 - на y+0.5) достигнуты в столбце (x,y,z). Смотреть через reached().
+    """
+    x0, y0, z0 = start
+    seen = {}
+
+    def mark(x, y, z, s):
+        added = seen.setdefault((x, y, z), set())
+        if s in added:
+            return False
+        added.add(s)
+        return True
+
+    mark(x0, y0, z0, 0)
+    q = deque([(x0, y0, z0, 0)])
+
+    while q:
+        x, y, z, s = q.popleft()
+        h = y + 0.5 * s
+
+        if _is_ladder(block_fn, x, y, z) or _is_ladder(block_fn, x, y - 1, z):
+            for ny in (y - 1, y + 1):
+                if not (yr[0] <= ny <= yr[1]):
+                    continue
+                if (_is_ladder(block_fn, x, min(y, ny), z)
+                        and _column_kind(block_fn(x, ny, z)) != 'solid' and mark(x, ny, z, 0)):
+                    q.append((x, ny, z, 0))
+
+        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, nz = x + dx, z + dz
+            if not (xr[0] <= nx <= xr[1] and zr[0] <= nz <= zr[1]):
+                continue
+
+            # марш ступенек (BOT.md §10.4.4): подряд идущие *_stairs, каждая
+            # на 1 блок выше/ниже соседней - обычная лестница, без прыжка,
+            # хотя разница высот - целый блок (не polблока).
+            if s == 1 and _is_stairs(block_fn, x, y, z):
+                for ny in (y - 1, y + 1):
+                    if (yr[0] <= ny <= yr[1] and _is_stairs(block_fn, nx, ny, nz)
+                            and _stand_ok(block_fn, nx, ny, nz, 1) and mark(nx, ny, nz, 1)):
+                        q.append((nx, ny, nz, 1))
+
+            hi = min(int(h + max_step) + 1, yr[1])
+            for ny in range(yr[0], hi + 1):
+                for ns in (0, 1):
+                    nh = ny + 0.5 * ns
+                    if nh > h + max_step + 1e-9:
+                        continue
+                    if _stand_ok(block_fn, nx, ny, nz, ns) and mark(nx, ny, nz, ns):
+                        q.append((nx, ny, nz, ns))
+    return seen
+
+
+def reached(seen, x, y, z):
+    """Достигнута ли колонка (x,z) на уровне y - s=0 (h=y) точно, либо s=1
+    в клетке ниже (h=y-0.5 - палец/полублок, воспринимается как «дошёл до y»,
+    см. BOT.md §12 - причал/фонари fix-2 на нижних полублоках)."""
+    if seen.get((x, y, z)):
+        return True
+    return 1 in seen.get((x, y - 1, z), ())
 
 
 # ------------------------------------------------------------------
