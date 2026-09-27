@@ -208,7 +208,7 @@ def main():
 
     def bench_s(x0, z):  # DECOR §3.3, лицом на юг (к морю)
         for i, b in enumerate(('trapdoor:6', 'birch_stairs:3', 'birch_stairs:3', 'trapdoor:7')): put(x0 + i, F, z, b)
-    bench_s(-696, 1885); bench_s(-687, 1885)
+    bench_s(-696, 1884); bench_s(-687, 1884)  # как построено: отодвинуты от перил (Z 1886) на 1 блок, перед сиденьем - Z 1885
     put(-696, F, 1883, 'cauldron'); put(-684, F, 1883, 'cauldron')
 
     # кафе: ограждение террасы (восток, юг), стойки навеса
@@ -250,6 +250,8 @@ def main():
         return 'stone' if b == 'ground' else b
 
     errs = dl.check_water(rel, terrain_rel)
+    bench = dl.check_bench_front(rel, terrain_rel)
+    print('СКАМЕЙКИ (место для ног перед сиденьем): ошибок', len(bench)); [print('  E', m) for m in bench]
     se, wr = dl.check_supports(rel, order, terrain_rel)
     print('ОПОРЫ/ВОДА/ПОРЯДОК (decor_lib, по реальному порядку бота): ошибок', len(errs) + len(se), 'предупреждений', len(wr))
     for m in (errs + se)[:15]: print('  E', m)
@@ -272,7 +274,7 @@ def main():
                 if n in seen or not (-720 <= n[0] <= -678 and 1846 <= n[2] <= 1892 and 60 <= n[1] <= 70): continue
                 if dy == 1 and not free(x, y + 2, z): continue  # прыжок: над головой свободно
                 if stand(*n): seen.add(n); q.append(n)
-    TARGETS = {'голова пирса': (-690, 65, 1884), 'угол головы W': (-695, 65, 1883), 'угол головы E': (-684, 65, 1884),
+    TARGETS = {'голова пирса': (-690, 65, 1884), 'угол головы W': (-695, 65, 1883), 'угол головы E': (-684, 65, 1885),
                'причал': (-690, 64, 1888), 'терраса кафе': (-705, 65, 1873), 'кухня кафе': (-710, 65, 1872),
                'столик у юж. ограды': (-708, 65, 1874)}
     bad = {k: v for k, v in TARGETS.items() if v not in seen}

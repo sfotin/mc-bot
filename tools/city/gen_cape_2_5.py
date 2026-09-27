@@ -310,8 +310,7 @@ def main():
     # скамейки на площади: лицом на восток (бухта, марина) и на запад (закат)
     # перед сиденьем - свободная клетка пола (DECOR §3.3): восточная скамейка на X -765 (парапет на -763);
     for i, z in enumerate(range(1885, 1889)): put(-765, 65, z, ('trapdoor:4', 'birch_stairs:1', 'birch_stairs:1', 'trapdoor:5')[i])
-    # западная скамейка у маяка: как построено, вплотную к парапету (решение Serg - на сервере не переделывать); исключение в проверке скамеек
-    for i, z in enumerate(range(1885, 1889)): put(-774, 65, z, ('trapdoor:4', 'birch_stairs:0', 'birch_stairs:0', 'trapdoor:5')[i])
+    # западной скамейки у маяка нет: между башней и парапетом 1 клетка - места для ног не остаётся (снята fix-3)
     # маяк: дверь на восток, стремянка внутри до галереи, окна, свет, выход на галерею, перила
     put(LX + 2, 65, LZ, 'wooden_door:0'); put(LX + 2, 66, LZ, 'wooden_door:8')
     for y in range(65, 90): put(LX, y, LZ - 1, 'ladder:3')
@@ -326,7 +325,7 @@ def main():
             put(x, y + 1, z, 'quartz_block:2' if z in (BZ0, 1902) else 'dark_oak_fence')
     # смотровая: парапет с запада, скамейка лицом на запад, кашпо
     for z in range(VZ0 + 1, VZ1): put(VX0, 64, z, 'quartz_block')
-    for i, z in enumerate(range(1862, 1866)): put(VX0 + 1, 64, z, ('trapdoor:4', 'birch_stairs:0', 'birch_stairs:0', 'trapdoor:5')[i])
+    for i, z in enumerate(range(1862, 1866)): put(VX0 + 2, 64, z, ('trapdoor:4', 'birch_stairs:0', 'birch_stairs:0', 'trapdoor:5')[i])
     for x, z in ((VX1, VZ0), (VX1, VZ1)): put(x, 64, z, 'hardened_clay'); put(x, 65, z, 'leaves:4')
     # аллея: скамейка на входе дороги мыса убирается (X -770..-767, Z 1859)
     for x in range(-770, -766): put(x, 65, 1859, 'air')
@@ -360,7 +359,7 @@ def main():
         return 'stone' if b == 'ground' else ('air' if b == 'plant' else b)
 
     errs = dl.check_water(rel, terrain_rel)
-    BENCH_OK = {(-774, 1886), (-774, 1887), (VX0 + 1, 1863), (VX0 + 1, 1864)}  # оставлены как построено (см. выше)
+    BENCH_OK = set()  # исключений нет
     bench = [m for m in dl.check_bench_front(rel, terrain_rel)
              if tuple(int(v) for v in m[1:m.index(')')].split(','))[::2] not in {(x - ox, z - oz) for x, z in BENCH_OK}]
     print('СКАМЕЙКИ (место для ног перед сиденьем): ошибок', len(bench)); [print('  E', m) for m in bench]
