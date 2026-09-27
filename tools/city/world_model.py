@@ -28,6 +28,7 @@ BUILT = (
     ('embankment-4-ferris-wheel.json', (-685, 62, 1862)),
     ('cape-1-earthworks.json', (-778, 56, 1874)),
     ('cape-2-5-build.json', (-792, 60, 1859)),            # как построено, включая fix-2 и fix-3
+    ('oldtown-1-earthworks.json', (-706, 60, 1780)),
 )
 
 
