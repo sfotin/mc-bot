@@ -12,6 +12,7 @@ docs/HANDOFF.md, «Ручные правки»).
     W.block(x, y, z)   # 'ground' | 'water' | 'plant' | 'air' | имя блока схемы
     W.surf(x, z)       # верх твёрдого (не вода/трава)
     W.cave_top(x, z)   # верхняя оценка кровли каньона или None
+    World(built_before('имя.json'))   # мир до этой схемы — для её генератора
 """
 import json
 import os
@@ -29,7 +30,16 @@ BUILT = (
     ('cape-1-earthworks.json', (-778, 56, 1874)),
     ('cape-2-5-build.json', (-792, 60, 1859)),            # как построено, включая fix-2 и fix-3
     ('oldtown-1-earthworks.json', (-706, 60, 1780)),
+    ('oldtown-2-streets.json', (-724, 63, 1780)),
 )
+
+
+def built_before(schema):
+    """BUILT до схемы schema (не включая её) — мир, в котором схема проектировалась.
+    Генератор уже построенной схемы берёт мир отсюда, иначе после добавления
+    схемы в BUILT он перестаёт воспроизводить сам себя."""
+    names = [b[0] for b in BUILT]
+    return BUILT[:names.index(schema)] if schema in names else BUILT
 
 
 class World:

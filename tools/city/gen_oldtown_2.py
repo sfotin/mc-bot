@@ -26,7 +26,7 @@ from collections import Counter, deque
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from world_model import World, REPO  # noqa: E402
+from world_model import World, REPO, built_before  # noqa: E402
 sys.path.insert(0, os.path.join(REPO, 'tools', 'decor'))
 import decor_lib as dl  # noqa: E402
 
@@ -203,7 +203,7 @@ def build(W):
 
 def main():
     args = parse_args()
-    W = World()
+    W = World(built_before('oldtown-2-streets.json'))   # мир до этой схемы (она уже в BUILT)
     cells, net, H, role, lamps, SHO = build(W)
     xs = [k[0] for k in cells]; ys = [k[1] for k in cells]; zs = [k[2] for k in cells]
     ox, oy, oz = min(xs), min(ys), min(zs)
