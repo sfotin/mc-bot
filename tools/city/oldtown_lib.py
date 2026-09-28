@@ -24,7 +24,7 @@ def street_top(W, x, z):
     y = W.surf(x, z)
     b = W.block(x, y, z)
     while b in LAMP_PARTS: y -= 1; b = W.block(x, y, z)
-    if b in ('ground', 'grass') or b.startswith('water'): return None
+    if b in ('ground', 'grass') or b.startswith('water') or W.block(x, y + 1, z) == 'water': return None
     slab = b.split(':')[0] in ('stone_slab', 'wooden_slab', 'stone_slab2') and int((b.split(':') + ['0'])[1]) < 8
     return y + (0.5 if slab else 1.0)
 
@@ -143,6 +143,16 @@ def std_checks(W, cells, o, rel, order, H, anchors):
     return final
 
 
+def pave_unreached(S, H, seen):
+    """Клетки мощения без стоянки на их высоте; клетки, занятые декором над мощением, не считаются."""
+    import math
+    out = []
+    for (x, z), h in H.items():
+        if any(S.cells.get((x, y, z), 'air') != 'air' for y in range(math.ceil(h), math.ceil(h) + 3)): continue
+        if not dl.reached(seen, x, h, z): out.append((x, z))
+    return out
+
+
 def walk_report(final, start, box, targets):
     seen = dl.walk_reachable(final, start, box[0], box[1], box[2])
     bad = 0
@@ -186,6 +196,9 @@ CL = {'stonebrick': (122, 122, 122), 'stone': (125, 125, 125), 'double_stone_sla
       'wool:11': (50, 60, 160), 'wool:0': (240, 240, 240), 'wool:14': (160, 40, 40), 'wool:1': (230, 130, 40),
       'wool:4': (230, 210, 60), 'wool:5': (110, 180, 40), 'melon_block': (120, 160, 40), 'pumpkin': (220, 140, 30),
       'hay_block': (200, 170, 40), 'log2': (60, 45, 30), 'stained_glass_pane': (160, 120, 200),
+      'concrete:5': (100, 170, 25), 'concrete:13': (75, 95, 35), 'wool:13': (85, 110, 30), 'bookshelf': (140, 100, 60),
+      'enchanting_table': (60, 30, 40), 'anvil': (60, 60, 60), 'quartz_stairs': (236, 233, 226),
+      'water': (70, 130, 215), 'glass': (200, 225, 240), 'birch_door': (215, 200, 150), 'dark_oak_stairs': (70, 50, 30),
       'stone_pressure_plate': (140, 140, 140), 'wooden_pressure_plate': (150, 120, 70), 'flower_pot': (150, 80, 60)}
 
 

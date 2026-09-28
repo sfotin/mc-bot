@@ -23,10 +23,13 @@ CITY.md §6); правка владельца — проём из башни н�
 Исправление к построенному v1: --fix-from schemas/oldtown-3-townhall.json
 --fix-out schemas/oldtown-3-fix-1.json (только отличия, без зон USER_EDITS).
 
-Запуск: gen_oldtown_3.py [--out schemas/oldtown-3-townhall.json]
+Как построено — schemas/oldtown-3-build.json (v1 + oldtown-3-fix-1 + дверь владельца; в BUILT вместо
+oldtown-3-townhall.json). После постройки oldtown-3-fix-2 вывод генератора (v3) заменяет его.
+
+Запуск: gen_oldtown_3.py [--out schemas/oldtown-3-build.json]
                          [--preview docs/districts/oldtown-3-preview.png]
                          [--fix-from <построенная v1> --fix-out <fix>]
-Мир — World(built_before('oldtown-3-townhall.json')).
+Мир — World(built_before('oldtown-3-build.json')).
 Проверки: опоры + вода + порядок, проходимость (площадь от всех улиц, ратуша,
 2-й этаж, щитовая, звонница), скамейки (место для ног), перепад мощения <= 0.5,
 кровля каньона, резерв трасс, негативные прогоны.
@@ -61,17 +64,23 @@ LAMP_PARTS = ('quartz_block:1', 'dark_oak_fence', 'sea_lantern', 'stone_slab:7')
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--out', default=os.path.join(REPO, 'schemas', 'oldtown-3-townhall.json'))
+    p.add_argument('--out', default=os.path.join(REPO, 'schemas', 'oldtown-3-build.json'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'oldtown-3-preview.png'))
     p.add_argument('--fix-from', help='построенная схема (v1) — для исправляющей схемы')
     p.add_argument('--fix-out', help='куда записать исправляющую схему')
     return p.parse_args()
 
 
-# правки владельца на месте (как построено): проём башня → чердак в восточной стене башни
-USER_EDITS = {(KX1, 75, AXZ): 'air', (KX1, 76, AXZ): 'air'}
+# правки владельца на месте (как построено): дверь башня → чердак в восточной стене башни, у северной
+# стены (Z 1826); порода и ориентация двери — по скриншоту, приблизительно (в исправления не входит)
+USER_EDITS = {(KX1, 75, AXZ - 1): 'jungle_door:0', (KX1, 76, AXZ - 1): 'jungle_door:8'}
 # витражи: цвет по высоте окна (снизу вверх) — красный, жёлтый, синий; над входом — оранжевый/жёлтый/синий
 STAINED = {70: 'stained_glass_pane:14', 71: 'stained_glass_pane:4', 72: 'stained_glass_pane:11'}
+# v3 (после постройки v2): ратуша не должна походить на церковь — витражи заменены прозрачным
+# стеклом, колокола нет, шатёр со шпилем заменён зубцами и флагштоком с флагом города,
+# над входом балкон (дверь из комнаты башни на 2-м этаже). Исправление к построенному:
+# --fix-from schemas/oldtown-3-build.json --fix-out schemas/oldtown-3-fix-2.json
+V3 = True
 
 
 def street_top(W, x, z):
@@ -318,6 +327,32 @@ def build(W):
         put(x, 68, z - 1, 'dark_oak_fence'); put(x, 68, z + 1, 'dark_oak_fence')
         put(x, 67, z - 1, 'sea_lantern'); put(x, 67, z + 1, 'sea_lantern')
         put(x, 69, z, 'stone_slab:7')
+    # ---------- v3: ратуша — «гражданский» облик (не церковь) ----------
+    if V3:
+        for k, b in list(cells.items()):                       # витражи → прозрачное стекло
+            if b.startswith('stained_glass_pane'): cells[k] = 'glass_pane'
+        cells[(-669, 90, 1828)] = 'air'; cells[(-669, 89, 1828)] = 'air'          # колокола нет
+        for x in range(KX0, KX1 + 1):                            # шатёр и шпиль → зубцы и флагшток
+            for z in range(KZ0, KZ1 + 1):
+                for y in range(92, 98): cells[(x, y, z)] = 'air'
+                edge = x in (KX0, KX1) or z in (KZ0, KZ1)
+                if edge:
+                    put(x, 92, z, 'quartz_block')
+                    if (x + z) % 2 == 0: put(x, 93, z, 'stonebrick')
+        for y in range(92, 98): put(-670, y, AXZ, 'dark_oak_fence')
+        for y, c in ((96, 11), (95, 0)):                         # флаг города: синий над белым
+            put(-669, y, AXZ, f'wool:{c}'); put(-668, y, AXZ, f'wool:{c}')
+        put(-670, 98, AXZ, 'gold_block')
+        # балкон над входом (2-й этаж, из комнаты башни): дверь вместо окна
+        for y in (F2 + 1, F2 + 2): cells[(TX0, y, AXZ)] = 'air'
+        put(TX0, F2 + 1, AXZ, 'dark_oak_door:2'); put(TX0, F2 + 2, AXZ, 'dark_oak_door:8')
+        put(TX0, F2 + 3, AXZ, 'quartz_block:1')
+        put(TX0 + 1, F2 + 1, AXZ, 'stone_pressure_plate')
+        for x in (TX0 - 2, TX0 - 1):
+            for z in range(KZ0, KZ1 + 1):
+                put(x, F2, z, 'quartz_block')
+                if x == TX0 - 2 or z in (KZ0, KZ1): put(x, F2 + 1, z, 'dark_oak_fence')
+        for z in (KZ0, KZ1): put(TX0 - 1, F2 + 1, z, 'dark_oak_fence')
     # обочина за восточной границей: откос к мощению
     for (x, z), h in list(H.items()):
         if x != BX1: continue
@@ -336,7 +371,7 @@ def build(W):
 
 def main():
     args = parse_args()
-    W = World(built_before('oldtown-3-townhall.json'))
+    W = World(built_before('oldtown-3-build.json'))
     cells, H, anchors = build(W)
     xs = [k[0] for k in cells]; ys = [k[1] for k in cells]; zs = [k[2] for k in cells]
     ox, oy, oz = min(xs), min(ys), min(zs)
@@ -372,8 +407,8 @@ def main():
                'выход на главный пр. (−676,1818)': (-676, 65, 1818), 'выход на Ратушную ул. (−670,1836)': (-670, 65, 1836),
                'восточное кольцо (−661,1827)': (-661, 65, AXZ), 'ратуша: вестибюль': (-670, 65, AXZ),
                'ратуша: зал 1 эт.': (-666, 65, 1831), 'щитовая': (-670, 65, 1823), 'зал 2 эт.': (-667, 70, 1831),
-               'комната башни 2 эт.': (-670, 70, AXZ), 'звонница': (-670, 88, AXZ),
-               'чердак (через проём владельца)': (-665, 75, AXZ)}
+               'комната башни 2 эт.': (-670, 70, AXZ), 'балкон над входом': (TX0 - 1, 70, AXZ), 'звонница': (-670, 88, AXZ),
+               'чердак (через дверь владельца)': (-665, 75, AXZ - 1)}
     bad_t = []
     for k, (x, y, z) in targets.items():
         ok = dl.reached(seen, x, y, z); bad_t += [] if ok else [k]
@@ -407,11 +442,15 @@ def main():
         old = json.load(open(args.fix_from))
         o1 = (-687, 59, 1819)
         oldabs = {(e['x'] + o1[0], e['y'] + o1[1], e['z'] + o1[2]): e['block'] for e in old}
-        fix = {k: b for k, b in cells.items() if oldabs.get(k) != b and k not in USER_EDITS}
+        def was(k):                     # что стоит сейчас: построенная схема, иначе мир до неё
+            if k in oldabs: return oldabs[k]
+            b0 = W.block(*k)
+            return 'air' if b0 in ('air', 'plant') else b0
+        fix = {k: b for k, b in cells.items() if was(k) != b and k not in USER_EDITS}
         gone = [k for k in oldabs if k not in cells]
-        print('исправление к v1: блоков', len(fix), dict(Counter(b.split(':')[0] for b in fix.values())), '| пропавших из v1:', len(gone))
-        merged = dict(oldabs); merged.update(fix); merged.update(USER_EDITS)
-        print('v1 + исправление + правки владельца = v2:', merged == cells)
+        print('исправление к построенной: блоков', len(fix), dict(Counter(b.split(':')[0] for b in fix.values())), '| пропавших из построенной:', len(gone))
+        ok = all((fix.get(k) or USER_EDITS.get(k) or was(k)) == b for k, b in cells.items()) and not gone
+        print('построенная + исправление + правки владельца = текущий проект:', ok)
         if args.fix_out:
             fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
             fo = (min(fx), min(fy), min(fz))
