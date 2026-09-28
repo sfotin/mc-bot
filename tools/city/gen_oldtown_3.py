@@ -17,8 +17,15 @@
   1-го этажа до звонницы;
 - кольцо мощения вокруг ратуши, обочина за восточной границей — откосом.
 
+v2 (после постройки v1): витражи (stained_glass_pane) в окнах 2-го этажа, над
+входом и в башне; нажимные плиты у дверей изнутри (каменный пол — каменные,
+CITY.md §6); правка владельца — проём из башни на чердак (USER_EDITS).
+Исправление к построенному v1: --fix-from schemas/oldtown-3-townhall.json
+--fix-out schemas/oldtown-3-fix-1.json (только отличия, без зон USER_EDITS).
+
 Запуск: gen_oldtown_3.py [--out schemas/oldtown-3-townhall.json]
                          [--preview docs/districts/oldtown-3-preview.png]
+                         [--fix-from <построенная v1> --fix-out <fix>]
 Мир — World(built_before('oldtown-3-townhall.json')).
 Проверки: опоры + вода + порядок, проходимость (площадь от всех улиц, ратуша,
 2-й этаж, щитовая, звонница), скамейки (место для ног), перепад мощения <= 0.5,
@@ -56,7 +63,15 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--out', default=os.path.join(REPO, 'schemas', 'oldtown-3-townhall.json'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'oldtown-3-preview.png'))
+    p.add_argument('--fix-from', help='построенная схема (v1) — для исправляющей схемы')
+    p.add_argument('--fix-out', help='куда записать исправляющую схему')
     return p.parse_args()
+
+
+# правки владельца на месте (как построено): проём башня → чердак в восточной стене башни
+USER_EDITS = {(KX1, 75, AXZ): 'air', (KX1, 76, AXZ): 'air'}
+# витражи: цвет по высоте окна (снизу вверх) — красный, жёлтый, синий; над входом — оранжевый/жёлтый/синий
+STAINED = {70: 'stained_glass_pane:14', 71: 'stained_glass_pane:4', 72: 'stained_glass_pane:11'}
 
 
 def street_top(W, x, z):
@@ -252,14 +267,19 @@ def build(W):
     put(-668, F + 1, 1823, 'wooden_door:2'); put(-668, F + 2, 1823, 'wooden_door:8')
     # окна
     def win(x, z, ys):
-        for y in ys: put(x, y, z, 'glass_pane')
+        for y in ys: put(x, y, z, STAINED.get(y, 'glass_pane') if y > F2 else 'glass_pane')
     for z in (1823, 1831): win(TX0, z, (F + 2, F + 3)); win(TX0, z, (F2 + 1, F2 + 2, F2 + 3))
     for z in (1823, 1825, 1827, 1829, 1831): win(TX1, z, (F + 2, F + 3)); win(TX1, z, (F2 + 1, F2 + 2, F2 + 3))
     for x in (-666, -664): win(x, TZ0, (F + 2, F + 3))
     for x in (-670, -666, -664): win(x, TZ0, (F2 + 1, F2 + 2, F2 + 3))
     for x in (-670, -666, -664): win(x, TZ1, (F + 2, F + 3)); win(x, TZ1, (F2 + 1, F2 + 2, F2 + 3))
-    win(TX0, AXZ, (F2 + 1, F2 + 2, F2 + 3))                                 # над входом
-    for y in (78, 81): win(KX0, AXZ, (y,)); win(-670, KZ1, (y,)); win(-670, KZ0, (y,))
+    for y, c in zip((F2 + 1, F2 + 2, F2 + 3), (1, 4, 11)): put(TX0, y, AXZ, f'stained_glass_pane:{c}')   # над входом
+    for y, c in ((78, 11), (81, 14)):
+        for xz in ((KX0, AXZ), (-670, KZ1), (-670, KZ0)): put(xz[0], y, xz[1], f'stained_glass_pane:{c}')
+    # нажимные плиты у дверей изнутри (пол каменный): вход — внутри вестибюля; щитовая — с обеих сторон
+    put(TX0 + 1, F + 1, AXZ, 'stone_pressure_plate')
+    put(-669, F + 1, 1823, 'stone_pressure_plate'); put(-667, F + 1, 1823, 'stone_pressure_plate')
+    for k, b in USER_EDITS.items(): put(*k, b)
     # циферблаты: 3×3 белый кварц, в центре чёрный бетон
     for y in (84, 85, 86):
         for t in (-1, 0, 1):
@@ -352,7 +372,8 @@ def main():
                'выход на главный пр. (−676,1818)': (-676, 65, 1818), 'выход на Ратушную ул. (−670,1836)': (-670, 65, 1836),
                'восточное кольцо (−661,1827)': (-661, 65, AXZ), 'ратуша: вестибюль': (-670, 65, AXZ),
                'ратуша: зал 1 эт.': (-666, 65, 1831), 'щитовая': (-670, 65, 1823), 'зал 2 эт.': (-667, 70, 1831),
-               'комната башни 2 эт.': (-670, 70, AXZ), 'звонница': (-670, 88, AXZ)}
+               'комната башни 2 эт.': (-670, 70, AXZ), 'звонница': (-670, 88, AXZ),
+               'чердак (через проём владельца)': (-665, 75, AXZ)}
     bad_t = []
     for k, (x, y, z) in targets.items():
         ok = dl.reached(seen, x, y, z); bad_t += [] if ok else [k]
@@ -381,6 +402,30 @@ def main():
     neg = dict(cells); neg[(-684, 65, 1822)] = 'stonebrick'; neg[(-684, 65, 1823)] = 'stonebrick'
     rel2 = {(x - ox, y - oy, z - oz): b for (x, y, z), b in neg.items()}
     print('НЕГАТИВ: перед скамейкой блоки — ошибок', len(dl.check_bench_front(rel2, terrain_rel)), '(ждём > 0)')
+    if args.fix_from:
+        import json
+        old = json.load(open(args.fix_from))
+        o1 = (-687, 59, 1819)
+        oldabs = {(e['x'] + o1[0], e['y'] + o1[1], e['z'] + o1[2]): e['block'] for e in old}
+        fix = {k: b for k, b in cells.items() if oldabs.get(k) != b and k not in USER_EDITS}
+        gone = [k for k in oldabs if k not in cells]
+        print('исправление к v1: блоков', len(fix), dict(Counter(b.split(':')[0] for b in fix.values())), '| пропавших из v1:', len(gone))
+        merged = dict(oldabs); merged.update(fix); merged.update(USER_EDITS)
+        print('v1 + исправление + правки владельца = v2:', merged == cells)
+        if args.fix_out:
+            fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
+            fo = (min(fx), min(fy), min(fz))
+            frel = {(x - fo[0], y - fo[1], z - fo[2]): b for (x, y, z), b in fix.items()}
+            forder = dl.compute_order(frel)
+            dl.save(frel, args.fix_out, forder)
+
+            def fterr(x, y, z):          # мир для исправления — построенная v1 поверх мира до неё
+                k = (x + fo[0], y + fo[1], z + fo[2])
+                if k in oldabs: return oldabs[k]
+                b = W.block(*k)
+                return 'stone' if b == 'ground' else ('air' if b == 'plant' else b)
+            fe = dl.check_water(frel, fterr); fs, fw = dl.check_supports(frel, forder, fterr)
+            print('исправление: origin', *fo, '| записей', len(frel), '| опоры/вода/порядок: ошибок', len(fe) + len(fs), '| предупреждений', len(fw))
     if args.preview: preview(args.preview, final)
 
 

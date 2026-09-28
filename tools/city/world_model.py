@@ -32,6 +32,7 @@ BUILT = (
     ('oldtown-1-earthworks.json', (-706, 60, 1780)),
     ('oldtown-2-streets.json', (-724, 63, 1780)),
     ('oldtown-1-fix-1.json', (-705, 65, 1799)),         # выход из воды, видимость Соборного пруда
+    ('oldtown-3-townhall.json', (-687, 59, 1819)),      # v1; владелец прорубил проём башня → чердак (gen_oldtown_3 USER_EDITS)
 )
 
 
