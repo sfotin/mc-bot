@@ -17,6 +17,11 @@
 - статуя крипера (масштаб 1 блок = 2 пикселя, высота 13 бл.) на постаменте 6×6
   X −699…−694, Z 1792…1797, лицом к проспекту С–Ю (восток).
 
+v2 (после постройки v1): колонны портика и скамейки висели на блок над мощением —
+портик поднят на Y 66 (ступени полублоками вокруг), скамейки и урна ставятся на мощение.
+Исправление к построенной v1: --fix-from schemas/oldtown-6-library.json --fix-out
+schemas/oldtown-6-fix-1.json. После его постройки вывод генератора — как построено.
+
 Запуск: gen_oldtown_6.py [--out schemas/oldtown-6-library.json]
                          [--preview docs/districts/oldtown-6-preview.png]
 Мир — World(built_before('oldtown-6-library.json')).
@@ -46,6 +51,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--out', default=os.path.join(REPO, 'schemas', 'oldtown-6-library.json'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'oldtown-6-preview.png'))
+    p.add_argument('--fix-from', help='построенная схема — для исправляющей схемы')
+    p.add_argument('--fix-out', help='куда записать исправляющую схему')
     return p.parse_args()
 
 
@@ -79,7 +86,7 @@ def build(W):
     lib = (LX0, LX1, LZ0, LZ1)
     block = [(x, z) for x in range(BX0, BX1 + 1) for z in range(BZ0, BZ1 + 1)
              if not in_rect(x, z, lib) and not in_rect(x, z, POND) and not in_rect(x, z, PLINTH)]
-    H, anchors = paving_heights(W, block, extra_anchors={(LX1 + 1, DOOR_Z): 66.0})
+    H, anchors = paving_heights(W, block, extra_anchors={(LX1 + 1, z): 66.0 for z in range(LZ0 + 2, LZ1 - 1)})   # портик Y 66
     portico = lambda x, z: x == LX1 + 1 and LZ0 + 2 <= z <= LZ1 - 2
     S.pave(H, lambda x, z: ('quartz_block', 'stone_slab:7') if portico(x, z) else
            ('stonebrick', 'stone_slab:5') if (x % 4 == 0 or z % 4 == 0) else ('sandstone:2', 'stone_slab:1'))
@@ -200,8 +207,8 @@ def build(W):
     # площадь: скамейки лицом к пруду, урна, фонари, кашпо
     for z0 in (1800, 1806):
         for i, z in enumerate(range(z0, z0 + 4)):
-            put(-702, 66, z, ('trapdoor:4', 'birch_stairs:1', 'birch_stairs:1', 'trapdoor:5')[i])
-    put(-702, 66, 1804, 'cauldron')
+            put(-702, base_y(S, H, -702, z), z, ('trapdoor:4', 'birch_stairs:1', 'birch_stairs:1', 'trapdoor:5')[i])
+    put(-702, base_y(S, H, -702, 1804), 1804, 'cauldron')
     for x, z in ((-705, 1794), (-705, 1812), (-719, 1793), (-719, 1812)):
         h = H[(x, z)]; b = int(h) if h == int(h) else int(h) + 1
         if h != int(h): put(x, int(h), z, 'stonebrick')
@@ -223,7 +230,7 @@ def main():
     final = std_checks(W, S.cells, o, rel, order, H, anchors)
     print('чаровальня: полок, засчитанных столом —', enchant_power(final, TABLE), '(максимум уровня — от 15)')
     B = ((-724, -689), (1788, 1816), (58, 90))
-    targets = {'портик у двери': (-706, 66, DOOR_Z), 'читальный зал 1 эт.': (-711, 66, 1804), 'у стола зачарований': (-713, 66, 1797),
+    targets = {'портик у двери': (-706, 66, DOOR_Z), 'портик, северный край': (-706, 66, 1796), 'читальный зал 1 эт.': (-711, 66, 1804), 'у стола зачарований': (-713, 66, 1797),
                'щитовая': (-709, 66, 1796), 'зал 2 эт.': (-713, 71, 1803), 'серверная': (-709, 71, 1796),
                'у терминала ME (перед проёмом)': (-708, 71, 1799), 'перед скамейкой у пруда': (-701, 65.5, 1802),
                'у статуи (запад постамента)': (-700, 65, 1795), 'к проспекту С–Ю (север пруда)': (-693, 65, 1798),
@@ -243,10 +250,16 @@ def main():
     neg = dict(S.cells); neg[(-715, F + 1, 1796)] = 'stonebrick'
     fn = lambda x, y, z: neg.get((x, y, z)) or final(x, y, z)
     print('НЕГАТИВ: блок между столом и полками — полок засчитано', enchant_power(fn, TABLE), '(ждём < 30)')
-    neg = dict(S.cells); neg[(-701, 66, 1801)] = 'stonebrick'
+    neg = dict(S.cells); neg[(-701, base_y(Schema(W), H, -701, 1801), 1801)] = 'stonebrick'
     _, tr = fns(W, S.cells, o)
     print('НЕГАТИВ: перед скамейкой блок — ошибок',
           len(dl.check_bench_front({(x - o[0], y - o[1], z - o[2]): b for (x, y, z), b in neg.items()}, tr)), '(ждём > 0)')
+    if args.fix_from:
+        write_fix(W, S.cells, args.fix_from, (-719, 60, 1792), args.fix_out)
+        import json
+        v1 = {(e['x'] - 719, e['y'] + 60, e['z'] + 1792): e['block'] for e in json.load(open(args.fix_from))}
+        f1, _ = fns(W, v1, (-719, 60, 1792))
+        print('НЕГАТИВ: построенная v1 — висящих над мощением', len(floating_over_paving(f1, v1, H)), '(ждём > 0)')
     if args.preview:
         v1 = elevation(final, 'x', None, range(1814, 1789, -1), range(-690, -726, -1))
         v2 = section(final, 'z', 1795, range(-720, -690))

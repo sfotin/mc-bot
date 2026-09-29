@@ -135,12 +135,41 @@ def std_checks(W, cells, o, rel, order, H, anchors):
     jump = sum(1 for c in H for n in ((c[0] + 1, c[1]), (c[0], c[1] + 1)) if n in H and abs(H[c] - H[n]) > 0.5)
     edge = sum(1 for c in H for a in anchors if abs(c[0] - a[0]) + abs(c[1] - a[1]) == 1 and abs(H[c] - anchors[a]) > 0.5)
     print('мощение: клеток', len(H), dict(sorted(Counter(H.values()).items())), '| перепад соседей > 0.5 —', jump, '| со стыком улиц > 0.5 —', edge)
+    fl = floating_over_paving(final, cells, H)
+    print('висящие над мощением (под предметом воздух или нижний полублок):', len(fl), fl[:6])
     lo = {}
     for (x, y, z) in cells: lo[(x, z)] = min(lo.get((x, z), 999), y)
     roofs = [y - W.cave_top(x, z) - 1 for (x, z), y in lo.items() if W.cave_top(x, z) is not None]
     print('кровля каньона под схемой: мин.', min(roofs) if roofs else '—', '(норма >= 3) | в резерве трасс ниже Y 60 —',
           sum(1 for k, b in cells.items() if b != 'air' and k[1] < 60 and RESERVE(k[0], k[2])))
     return final
+
+
+def floating_over_paving(final, cells, H):
+    """Предметы на мощении (скамейки, урны, колонны, фонари, кашпо, прилавки): блок схемы над
+    мощением, под которым воздух или нижний полублок — висит (так было у библиотеки v1)."""
+    import math
+    out = []
+    for (x, z), h in H.items():
+        top = math.ceil(h) - 1                       # верхний блок мощения (полный или полублок)
+        for y in range(top + 1, top + 3):             # стоит на мощении или висит на 1 блок выше (навесы выше — не в счёт)
+            b = cells.get((x, y, z))
+            if not b or b == 'air': continue
+            below = final(x, y - 1, z)
+            nm, meta = (below.split(':') + ['0'])[:2]
+            half = nm in ('stone_slab', 'wooden_slab', 'stone_slab2') and int(meta) < 8
+            if below == 'air' or half: out.append((x, y, z, b))
+            break
+    return out
+
+
+def base_y(S, H, x, z, block='stonebrick'):
+    """Y для предмета на мощении: на полном блоке — над ним; на полублоке — полублок заменяется
+    полным блоком, предмет ставится на него."""
+    h = H[(x, z)]
+    if h == int(h): return int(h)
+    S.put(x, int(h), z, block)
+    return int(h) + 1
 
 
 def pave_unreached(S, H, seen):
@@ -168,6 +197,44 @@ def door_plates(sch, doors):
         p = DOOR_PLATE[floor]
         sch.put(x + dx, y, z + dz, p)
         if both: sch.put(x - dx, y, z - dz, p)
+
+
+def write_fix(W, cells, built_path, built_origin, out, user_edits=None):
+    """Исправляющая схема к построенной: блоки проекта, отличающиеся от того, что стоит сейчас
+    (построенная схема поверх мира до неё); зоны правок владельца не трогаются."""
+    user_edits = user_edits or {}
+    old = json.load(open(built_path))
+    oldabs = {(e['x'] + built_origin[0], e['y'] + built_origin[1], e['z'] + built_origin[2]): e['block'] for e in old}
+
+    def was(k):
+        if k in oldabs: return oldabs[k]
+        b0 = W.block(*k)
+        return 'air' if b0 in ('air', 'plant') else b0
+    fix = {k: b for k, b in cells.items() if was(k) != b and k not in user_edits}
+    gone = [k for k in oldabs if k not in cells and k not in user_edits]
+    # блоки построенной, которых нет в проекте: где до схемы был воздух — убрать; где грунт —
+    # оставить (твёрдое вместо грунта не меняет облика и опор)
+    gone_air = [k for k in gone if W.block(*k) in ('air', 'plant') and oldabs[k] != 'air']
+    for k in gone_air: fix[k] = 'air'
+    left = [k for k in gone if k not in gone_air]
+    ok = all((fix.get(k) or user_edits.get(k) or was(k)) == b for k, b in cells.items())
+    print('исправление к построенной: блоков', len(fix), dict(Counter(b.split(':')[0] for b in fix.values())),
+          '| убрано лишнего:', len(gone_air), '| оставлено вместо грунта:', len(left))
+    print('построенная + исправление + правки владельца = текущий проект:', ok)
+    if out and fix:
+        fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
+        fo = (min(fx), min(fy), min(fz))
+        frel = {(x - fo[0], y - fo[1], z - fo[2]): b for (x, y, z), b in fix.items()}
+        forder = dl.compute_order(frel)
+        dl.save(frel, out, forder)
+
+        def fterr(x, y, z):
+            k = (x + fo[0], y + fo[1], z + fo[2])
+            b = was(k)
+            return 'stone' if b == 'ground' else b
+        fe = dl.check_water(frel, fterr); fs, fw = dl.check_supports(frel, forder, fterr)
+        print('исправление: origin', *fo, '| записей', len(frel), '| опоры/вода/порядок: ошибок', len(fe) + len(fs), '| предупреждений', len(fw))
+    return fix
 
 
 def fix_diff(new_cells, built_rel, built_origin, skip=lambda x, y, z: False):
