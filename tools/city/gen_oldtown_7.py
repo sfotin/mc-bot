@@ -11,6 +11,12 @@
 - променад: набережные озера (верх Y 66) + полоса X −708…−707 и южная полоса
   Z 1834…1838 — мощение песчаником, скамейки лицом к озеру, фонари, кашпо, урны.
 
+v2 (после постройки v1): у южной двери павильона — ступенька к переулку; вторая скамейка
+променада перенесена с Z 1827…1830 на Z 1831…1834 (стояла спинкой к двери дома К3); у западной двери набережная продолжена
+на клетку (X −704, Z 1832) вместо воды — площадка 2×1, вода не впритык к выходу.
+Исправление к построенной: --fix-from schemas/oldtown-7-gallery.json --fix-out
+schemas/oldtown-7-fix-1.json.
+
 Запуск: gen_oldtown_7.py [--out schemas/oldtown-7-gallery.json]
                          [--preview docs/districts/oldtown-7-preview.png]
 Мир — World(built_before('oldtown-7-gallery.json')).
@@ -37,6 +43,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--out', default=os.path.join(REPO, 'schemas', 'oldtown-7-gallery.json'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'oldtown-7-preview.png'))
+    p.add_argument('--fix-from', help='построенная схема — для исправляющей схемы')
+    p.add_argument('--fix-out', help='куда записать исправляющую схему')
     return p.parse_args()
 
 
@@ -99,7 +107,7 @@ def build(W):
         put(-697, F + 2, z, ART[4 + i])            # тумбы у восточной стены
         put(-697, F + 1, z, 'quartz_block')
     # променад: скамейки лицом к озеру (восток), фонари, кашпо, урны
-    for z0 in (1821, 1827):
+    for z0 in (1821, 1831):
         for i, z in enumerate(range(z0, z0 + 4)):
             put(-707, 66, z, ('trapdoor:4', 'birch_stairs:1', 'birch_stairs:1', 'trapdoor:5')[i])
     put(-707, 66, 1826, 'cauldron')
@@ -112,6 +120,10 @@ def build(W):
         h = H[(x, z)]; b = int(h) if h == int(h) else int(h) + 1
         if h != int(h): put(x, int(h), z, 'stonebrick')
         put(x, b, z, 'hardened_clay'); put(x, b + 1, z, 'leaves:4')
+    S.put(PX0 - 1, F, PZ0 + 2, 'stonebrick')          # площадка у западной двери (вместо воды)
+    fin = lambda x, y, z: (lambda b: 'air' if b == 'plant' else b)(S.cells.get((x, y, z)) or W.block(x, y, z))
+    for (x, y, z), why in door_approach_issues(fin, outdoor_doors(fin, S.cells)):
+        door_approach(S, fin, (x, y, z), int(S.cells[(x, y, z)].split(':')[1]), 1)
     return S, H, anchors
 
 
@@ -122,7 +134,7 @@ def main():
     o, rel, order = save(S, args.out)
     print('== ПРОВЕРКИ ==')
     final = std_checks(W, S.cells, o, rel, order, H, anchors)
-    targets = {'павильон: зал у воды': (-699, 66, 1831), 'павильон: восток': (-698, 66, 1836), 'щитовая': (-701, 66, 1836),
+    targets = {'площадка у западной двери': (PX0 - 1, 66, PZ0 + 2), 'павильон: зал у воды': (-699, 66, 1831), 'павильон: восток': (-698, 66, 1836), 'щитовая': (-701, 66, 1836),
                'перед скамейкой (набережная)': (-706, 66, 1823), 'набережная, север': (-700, 66, 1819),
                'набережная, восток': (-693, 66, 1826), 'южная полоса': (-706, 66, 1836), 'переулок Z1840': (-700, 66, 1840),
                'проспект С–Ю': (-690, 66, 1830), 'главный проспект': (-700, 66, 1817)}
@@ -148,6 +160,9 @@ def main():
     _, tr = fns(W, S.cells, o)
     rel3 = {(x - o[0], y - o[1], z - o[2]): b for (x, y, z), b in neg3.items()}
     print('НЕГАТИВ: перед скамейкой блок — ошибок', len(dl.check_bench_front(rel3, tr)), '(ждём > 0)')
+    print('подходы к дверям: проблем', len(door_approach_issues(final, outdoor_doors(final, S.cells))))
+    if args.fix_from:
+        write_fix(W, S.cells, args.fix_from, (-708, 60, 1819), args.fix_out)
     if args.preview:
         v1 = elevation(final, 'z', None, range(-710, -690), range(1816, 1845))
         v2 = section(final, 'x', -700, range(1816, 1842))

@@ -172,6 +172,69 @@ def base_y(S, H, x, z, block='stonebrick'):
     return int(h) + 1
 
 
+DOOR_OUT = {0: (-1, 0), 1: (0, -1), 2: (1, 0), 3: (0, 1)}      # meta двери (открывается внутрь) -> наружу
+STAIR_UP = {(0, -1): 3, (0, 1): 2, (-1, 0): 1, (1, 0): 0}      # ступенька «вверх» в направлении (dx, dz)
+
+
+def _top(final, x, z, y_hi):
+    """Верх ходовой поверхности клетки не выше y_hi: (высота, блок)."""
+    for y in range(y_hi, y_hi - 6, -1):
+        b = final(x, y, z)
+        if b in ('air', 'plant') or b.endswith('pressure_plate'): continue
+        nm, meta = (b.split(':') + ['0'])[:2]
+        half = nm in ('stone_slab', 'wooden_slab', 'stone_slab2') and int(meta) < 8
+        return y + (0.5 if half else 1.0), b
+    return None, None
+
+
+def door_approach_issues(final, doors):
+    """Наружные двери: клетка перед дверью — мощение вровень с порогом или ступенька (stairs вверх к
+    двери); за ней — мощение не выше ступени и без бордюра/газона. doors — [(x, y, z, meta)]."""
+    out = []
+    for x, y, z, m in doors:
+        dx, dz = DOOR_OUT[m]
+        c1 = (x + dx, z + dz); c2 = (x + 2 * dx, z + 2 * dz)
+        if any(final(c1[0], yy, c1[1]) not in ('air', 'plant') for yy in range(y + 2, y + 8)): continue   # под навесом
+        t1, b1 = _top(final, c1[0], c1[1], y)
+        nm = (b1 or '').split(':')[0]
+        stair_ok = nm.endswith('_stairs') and b1 == f"{nm}:{STAIR_UP[(-dx, -dz)]}" and t1 == y
+        if b1 in ('ground', 'grass', 'dirt', None): out.append(((x, y, z), 'перед дверью газон/грунт')); continue
+        if not (t1 == y or stair_ok): out.append(((x, y, z), f'перед дверью {t1 - y:+} — не вровень и не ступенька')); continue
+        tread = y - 0.5 if stair_ok else y
+        t2, b2 = _top(final, c2[0], c2[1], y + 1)
+        if b2 in ('ground', 'grass', 'dirt', None) or t2 > tread + 0.5 or t2 < tread - 1:
+            out.append(((x, y, z), f'за ступенью {b2} {t2}'))
+    return out
+
+
+def outdoor_doors(final, cells):
+    return [(x, y, z, int(b.split(':')[1])) for (x, y, z), b in cells.items()
+            if b.split(':')[0].endswith('_door') and int(b.split(':')[1]) < 8]
+
+
+def door_approach(S, final, door, meta, L, end_top=None):
+    """Подход к наружной двери: L клеток наружу от порога — ступеньки (по 1 блоку) и мощение вровень,
+    до клетки L+1 (улица). Бордюр/газон/трава на пути убираются."""
+    x, y, z = door
+    dx, dz = DOOR_OUT[meta]
+    ex, ez = x + (L + 1) * dx, z + (L + 1) * dz
+    tE, bE = (end_top, None) if end_top is not None else _top(final, ex, ez, y + 1)
+    cobble = (bE or '').split(':')[0] in ('cobblestone', 'mossy_cobblestone', 'stone_slab') and (bE or '').startswith(('cobble', 'mossy', 'stone_slab:3'))
+    stair, full = ('stone_stairs', 'cobblestone') if cobble else ('stone_brick_stairs', 'stonebrick')
+    cur = y
+    for i in range(1, L + 1):
+        cx, cz = x + i * dx, z + i * dz
+        g = S.W.surf(cx, cz)
+        if cur - tE >= 0.5:
+            S.put(cx, cur - 1, cz, f'{stair}:{STAIR_UP[(-dx, -dz)]}'); base = cur - 2; nxt = cur - 1
+        else:
+            S.put(cx, cur - 1, cz, full); base = cur - 2; nxt = cur
+        for yy in range(min(g + 1, base + 1), base + 1):
+            if final(cx, yy, cz) in ('air', 'plant', 'water'): S.put(cx, yy, cz, 'stone')
+        for yy in range(cur, cur + 3): S.put(cx, yy, cz, 'air')
+        cur = nxt
+
+
 def pave_unreached(S, H, seen):
     """Клетки мощения без стоянки на их высоте; клетки, занятые декором над мощением, не считаются."""
     import math
@@ -221,6 +284,7 @@ def write_fix(W, cells, built_path, built_origin, out, user_edits=None):
     print('исправление к построенной: блоков', len(fix), dict(Counter(b.split(':')[0] for b in fix.values())),
           '| убрано лишнего:', len(gone_air), '| оставлено вместо грунта:', len(left))
     print('построенная + исправление + правки владельца = текущий проект:', ok)
+    if out is False: return fix
     if out and fix:
         fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
         fo = (min(fx), min(fy), min(fz))
@@ -235,6 +299,22 @@ def write_fix(W, cells, built_path, built_origin, out, user_edits=None):
         fe = dl.check_water(frel, fterr); fs, fw = dl.check_supports(frel, forder, fterr)
         print('исправление: origin', *fo, '| записей', len(frel), '| опоры/вода/порядок: ошибок', len(fe) + len(fs), '| предупреждений', len(fw))
     return fix
+
+
+def save_fix(W, fix, out, was=None):
+    """Записать исправляющую схему (абсолютные координаты) и проверить её поверх построенного мира."""
+    fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
+    fo = (min(fx), min(fy), min(fz))
+    frel = {(x - fo[0], y - fo[1], z - fo[2]): b for (x, y, z), b in fix.items()}
+    forder = dl.compute_order(frel)
+    dl.save(frel, out, forder)
+
+    def fterr(x, y, z):
+        k = (x + fo[0], y + fo[1], z + fo[2])
+        b = was(k) if was else W.block(*k)
+        return 'stone' if b == 'ground' else ('air' if b == 'plant' else b)
+    fe = dl.check_water(frel, fterr); fs, fw = dl.check_supports(frel, forder, fterr)
+    print('исправление: origin', *fo, '| записей', len(frel), '| опоры/вода/порядок: ошибок', len(fe) + len(fs), '| предупреждений', len(fw))
 
 
 def fix_diff(new_cells, built_rel, built_origin, skip=lambda x, y, z: False):

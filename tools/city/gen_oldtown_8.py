@@ -14,6 +14,11 @@
   дверь в щитовую), кабельная шахта 1×1 от Y 60 с люком iron_trapdoor:8.
 Полосы между домами и улицей (К3 юг, К4, К6) мостятся; дворы и сады — газон, деревья.
 
+v2 (после постройки v1): подходы к дверям — перед дверью мощение вровень с порогом или
+ступенька (stairs), у К4 и К6 — проход через бордюр/газон улицы-набережной до мостовой;
+строится только там, где проверка door_approach_issues находит проблему. Исправление к
+построенным: --fix-from-dir schemas --fix-out schemas/oldtown-8-fix-1.json.
+
 Запуск: gen_oldtown_8.py [--only k1,k2,...] [--outdir schemas]
                          [--preview docs/districts/oldtown-8-preview.png]
 Мир — World(built_before('oldtown-8-k1.json')) (кварталы не пересекаются).
@@ -62,6 +67,8 @@ def parse_args():
     p.add_argument('--only', default='k1,k2,k3,k4,k5,k6')
     p.add_argument('--outdir', default=os.path.join(REPO, 'schemas'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'oldtown-8-preview.png'))
+    p.add_argument('--fix-from-dir', help='папка с построенными oldtown-8-k*.json — для исправляющей схемы')
+    p.add_argument('--fix-out', help='куда записать исправляющую схему (одна на все кварталы)')
     return p.parse_args()
 
 
@@ -239,20 +246,40 @@ def build_quarter(W, key, idx0):
         n = FLOORS[k % len(FLOORS)]
         tg, front, el = house(S, W, fr, n, STY[k % len(STY)], elec, du, t, (k % FLAT_EVERY) == 2)
         info.append((fr, n, tg, front, el))
-    return S, H, anchors, info
+    # подходы к дверям (v2)
+    fin = lambda x, y, z: (lambda b: 'air' if b == 'plant' else b)(S.cells.get((x, y, z)) or W.block(x, y, z))
+    doors = [d for d in outdoor_doors(fin, S.cells)]
+    before = door_approach_issues(fin, doors)
+    L = 2 if key in ('k4', 'k6') else 1
+    for (x, y, z), why in before:
+        m = int(S.cells[(x, y, z)].split(':')[1])
+        door_approach(S, fin, (x, y, z), m, L)
+    after = door_approach_issues(fin, doors)
+    return S, H, anchors, info, (len(doors), before, after)
+
+
+BUILT_ORIGIN = {'k1': (-724, 60, 1780), 'k2': (-724, 60, 1792), 'k3': (-724, 60, 1819),
+                'k4': (-724, 60, 1842), 'k5': (-687, 60, 1780), 'k6': (-675, 60, 1840)}
+o_built = BUILT_ORIGIN.get
+World_now = None
 
 
 def main():
+    global World_now
     args = parse_args()
+    if args.fix_from_dir: World_now = World()
     W = World(built_before('oldtown-8-k1.json'))
-    idx = 0; finals = {}
+    idx = 0; finals = {}; allfix = {}
     total_bad = 0
     for key in ('k1', 'k2', 'k3', 'k4', 'k5', 'k6'):
-        S, H, anchors, info = build_quarter(W, key, idx)
+        S, H, anchors, info, (nd, before, after) = build_quarter(W, key, idx)
         idx += len(Q[key]['houses'])
         if key not in args.only.split(','): continue
         print(f'===== {key.upper()}: домов {len(info)}, этажность {[n for _, n, *_ in info]} =====')
         o, rel, order = save(S, os.path.join(args.outdir, f'oldtown-8-{key}.json'))
+        print(f'подходы к дверям: дверей {nd}, проблем в v1 {len(before)} (перестроены), после — {len(after)}', after[:3])
+        if args.fix_from_dir:
+            allfix.update(write_fix(W, S.cells, os.path.join(args.fix_from_dir, f'oldtown-8-{key}.json'), o_built(key), False))
         final = std_checks(W, S.cells, o, rel, order, H, anchors) if H else None
         if final is None:
             final, tr = fns(W, S.cells, o)
@@ -281,6 +308,9 @@ def main():
             k_top = [k for k in tg if k.endswith('эт.') and k != '1 эт.'][0]
             print('НЕГАТИВ: стремянка перекрыта полом — верхний этаж недостижим:', not dl.reached(s2, *tg[k_top]))
     print('ИТОГО недостижимых точек:', total_bad)
+    if args.fix_from_dir and args.fix_out and allfix:
+        print('исправление к кварталам: блоков', len(allfix))
+        save_fix(W, allfix, args.fix_out, was=lambda k: World_now.block(*k))
     if args.preview and finals:
         def fin(x, y, z):
             for f in finals.values():
