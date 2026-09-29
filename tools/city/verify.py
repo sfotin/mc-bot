@@ -42,6 +42,9 @@ REGISTRY = {
          {'city-1-streets.json': 'city-1-streets.json', 'city-1-parks.json': 'city-1-parks.json',
           'f.json': 'city-1-fix-1.json'}),
         ('gen_city_4.py', ['--out', '{T}/a.json', '--preview', ''], {'a.json': 'city-4-opener.json'}),
+        ('gen_city_5.py', ['--outdir', '{T}', '--preview', ''],
+         {n: n for n in ('city-5-gate.json', 'city-5-bridge.json', 'city-6-sail.json', 'city-7-spiral.json',
+                         'city-7-decks.json', 'city-7-ring.json')}),
     ],
 }
 
