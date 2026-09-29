@@ -20,11 +20,14 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 PALETTES = {
-    'stone': {'S': 'stonebrick', 'C': 'stonebrick:3', 's': 'stone_slab:5', 'u': 'stone_slab:13', 'D': 'stonebrick'},
-    'med': {'S': 'quartz_block', 'C': 'quartz_block:2', 's': 'stone_slab:7', 'u': 'stone_slab:15', 'D': 'double_stone_slab:9'},
+    'stone': {'S': 'stonebrick', 'C': 'stonebrick:3', 's': 'stone_slab:5', 'u': 'stone_slab:13',
+              'D': 'stonebrick', 'G': 'stained_glass:3'},
+    'med': {'S': 'quartz_block', 'C': 'quartz_block:2', 's': 'stone_slab:7', 'u': 'stone_slab:15',
+            'D': 'double_stone_slab:9', 'G': 'stained_glass:3'},
 }
 STAIR_BLOCK = {'stone': 'stone_brick_stairs', 'med': 'quartz_stairs'}
 
+CITY_RIM_LANTERNS = {(0, 4), (8, 4), (4, 0), (4, 8), (1, 1), (7, 1), (1, 7), (7, 7)}
 SEA_LANTERN_CORE_Y0 = {(2, 4), (6, 4), (4, 2), (4, 6)}
 SEA_LANTERN_RING_Y0 = {(6, 1), (6, 11), (1, 6), (11, 6), (2, 2), (10, 2), (2, 10), (10, 10)}
 JET_MID = ((4, 1), (4, 7), (1, 4), (7, 4))
@@ -69,7 +72,57 @@ def rim(mask_fn, x, z):
     return any(not mask_fn(x + dx, z + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)))
 
 
+def build_city(pal, ox=0, oy=0, oz=0):
+    """
+    Фонтан «Сити» (DECOR.md §5.3) - 9x9, для района стеклянных небоскрёбов.
+    Бассейн с бортом высотой ровно 1 блок над мощением: вода налита до верха
+    борта и видна с любой точки (в отклонённом §5.1 борт был 1,5 блока и
+    воды не было видно). В центре - стеклянный обелиск с морскими фонарями,
+    каскад от одного источника flowing_water:0 на макушке.
+    """
+    cells = {}
+
+    def put(x, y, z, block):
+        cells[(x + ox, y + oy, z + oz)] = block
+
+    # y0 - основание вровень с мощением, светящаяся кромка
+    for x in range(9):
+        for z in range(9):
+            if not oct9(x, z):
+                continue
+            put(x, 0, z, 'sea_lantern' if (x, z) in CITY_RIM_LANTERNS else pal['S'])
+    # y1 - борт в 1 блок и вода вровень с его верхом
+    for x in range(9):
+        for z in range(9):
+            if not oct9(x, z):
+                continue
+            if rim(oct9, x, z):
+                put(x, 1, z, pal['S'])
+            elif 3 <= x <= 5 and 3 <= z <= 5:
+                put(x, 1, z, pal['S'])          # постамент обелиска
+            else:
+                put(x, 1, z, 'water')
+    # обелиск: стекло с морскими фонарями через ряд
+    for y in range(2, 8):
+        put(4, y, 4, 'sea_lantern' if y % 2 == 0 else pal['G'])
+    # «корона» из плит - делит каскад на 4 струи
+    for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        put(4 + dx, 4, 4 + dz, pal['s'])
+    put(4, 8, 4, pal['G'])
+    put(4, 9, 4, 'flowing_water:0')             # единственный источник - каскад по обелиску
+    # 4 стеклянные призмы на воде по диагоналям - «башни» в отражении
+    for dx, dz in ((-2, -2), (2, -2), (-2, 2), (2, 2)):
+        put(4 + dx, 2, 4 + dz, pal['G'])
+    return cells
+
+
 def build_core(pal, ox=0, oy=0, oz=0):
+    """
+    ВНУТРЕННЯЯ ЗАГОТОВКА для фонтана 13x13 v2 (as_built_13 перестраивает её).
+    Сама по себе это отклонённая модель v1 (DECOR.md §5.1): высокий борт,
+    воды не видно, висячие источники. Отдельной схемой НЕ генерируется и в
+    постройку идти не должна - для района с небоскрёбами есть build_city.
+    """
     cells = {}
 
     def put(x, y, z, block):
@@ -214,11 +267,11 @@ def build_ring(pal, stair_block, shift_x, shift_z):
 
 
 EXPECTED = {
-    (9, 'stone'): {
-        'entries': 223,
-        'counts': {'stonebrick': 122, 'water': 52, 'flowing_water:0': 8, 'stone_slab:5': 29,
-                   'stonebrick:3': 6, 'sea_lantern': 5, 'stained_glass:3': 1},
-        'size': (9, 11, 9),
+    ('city', 'med'): {
+        'entries': 154,
+        'counts': {'quartz_block': 94, 'water': 36, 'sea_lantern': 11, 'stained_glass:3': 8,
+                   'stone_slab:7': 4, 'flowing_water:0': 1},
+        'size': (9, 10, 9),
     },
     (13, 'med'): {
         # v2 «как построено на сервере» (DECOR.md §5.2), см. as_built_13
@@ -232,7 +285,9 @@ EXPECTED = {
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--size', type=int, choices=(9, 13), required=True)
+    p.add_argument('--size', choices=('13', 'city'), required=True,
+                   help="13 - фонтан 13x13 «Набережная» v2 (§5.2); city - фонтан «Сити» 9x9 (§5.3). "
+                        "Вариант 9 (§5.1) отклонён и больше не генерируется - см. DECOR.md §5.1")
     p.add_argument('--palette', choices=('stone', 'med'), required=True)
     p.add_argument('--out', default=None, help='выходная схема (по умолчанию schemas/decor-fountain-<size>[-<palette>].json)')
     p.add_argument('--plan', action='store_true', help='напечатать поэтажный план ASCII')
@@ -243,9 +298,10 @@ def main():
     args = parse_args()
     pal = PALETTES[args.palette]
 
-    if args.size == 9:
-        cells = build_core(pal)
+    if args.size == 'city':
+        cells = build_city(pal)
     else:
+        args.size = 13
         shift_x, shift_y, shift_z = 2, 1, 2
         cells = build_core(pal, ox=shift_x, oy=shift_y, oz=shift_z)
         ring = build_ring(pal, STAIR_BLOCK[args.palette], shift_x, shift_z)
@@ -254,7 +310,8 @@ def main():
 
     order = dl.compute_order(cells)
 
-    default_name = f'decor-fountain-{args.size}.json' if args.size == 9 else f'decor-fountain-{args.size}-{args.palette}.json'
+    default_name = ('decor-fountain-city.json' if args.size == 'city'
+                    else f'decor-fountain-{args.size}-{args.palette}.json')
     out_path = args.out or os.path.join('schemas', default_name)
     dl.save(cells, out_path, order)
 
@@ -265,7 +322,8 @@ def main():
     support_warnings = water_warnings + support_warnings
     errors = water_errors + support_errors
 
-    label = f'фонтан {args.size}x{args.size} ({args.palette}) -> {out_path}'
+    label = (f'фонтан «Сити» 9x9 ({args.palette}) -> {out_path}' if args.size == 'city'
+             else f'фонтан {args.size}x{args.size} ({args.palette}) -> {out_path}')
     err_count = dl.report(cells, order, errors, support_warnings, label=label)
 
     xs = [k[0] for k in cells]; ys = [k[1] for k in cells]; zs = [k[2] for k in cells]
