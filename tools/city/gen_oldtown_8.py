@@ -267,7 +267,7 @@ World_now = None
 def main():
     global World_now
     args = parse_args()
-    if args.fix_from_dir: World_now = World()
+    if args.fix_from_dir: World_now = World(built_before('oldtown-8-fix-1.json'))
     W = World(built_before('oldtown-8-k1.json'))
     idx = 0; finals = {}; allfix = {}
     total_bad = 0
