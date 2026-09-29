@@ -49,6 +49,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--outdir', default=os.path.join(REPO, 'schemas'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'city-1-preview.png'))
+    p.add_argument('--fix-fountain', default=None,
+                   help='исправление city-1-fix-1: отклонённый фонтан (построен) -> фонтан «Сити» §5.3; путь схемы')
     return p.parse_args()
 
 
@@ -345,7 +347,7 @@ def build(W):
     # вода стоит вровень с ним, дно бассейна — грунт под мощением
     fx0, fx1, fz0, fz1 = P.FOUNTAIN
     fy = lvl((fx0 + 4, fz0 + 4))
-    for (x, y, z), b in GF.build_city(GF.PALETTES['med'], fx0, fy, fz0).items(): PK.put(x, y, z, b)
+    for (x, y, z), b in FOUNTAIN_FN[0](GF.PALETTES['med'], fx0, fy, fz0).items(): PK.put(x, y, z, b)
     # пруд: берег вровень с мощением, вода на той же Y (§6), глубина 3, дно — песок на камне
     wy = lvl(next(iter(pond)))
     px0, px1, pz0, pz1 = P.POND
@@ -436,6 +438,7 @@ def build(W):
 
 
 P_FOOT = {}
+FOUNTAIN_FN = [GF.build_city]      # фонтан «Сити» (DECOR §5.3); build_core — отклонённая модель, построена в сквере до city-1-fix-1
 
 
 def main():
@@ -452,6 +455,7 @@ def main():
     P_FOOT['top'] = rect(-800, -792, 1784, 1793)
     ST, PK, H, role, lamps, trees_s, ptrees, benches, wx, sink, pond, SHO, anchors, shaft, rail = build(W)
     net = set(role)
+    if args.fix_fountain: fountain_fix(W, PK, args.fix_fountain)
     print(f'сеть: клеток {len(net)} (улицы {sum(1 for v in role.values() if v[1] == "streets")}, этап 3 '
           f'{sum(1 for v in role.values() if v[1] == "parks")}) | верх покрытия Y {min(H.values())}…{max(H.values())} | '
           f'якорей (Старый город, набережная) {len(anchors)}')
@@ -557,6 +561,37 @@ def main():
     fl2 = floating_over_paving(fin_of(negc), negc, {c: H[c]})
     print('НЕГАТИВ: урна на блок выше мощения — висящие найдены:', len(fl2) > 0)
     if args.preview: preview(args.preview, final, H, net, wx, W)
+
+
+def fountain_fix(W, PK, out):
+    """city-1-fix-1: в сквере построен отклонённый фонтан (build_core, DECOR §5.1) — заменить на «Сити» (§5.3).
+    Отличия построенной схемы (с build_core) от текущей (с build_city) в габарите фонтана."""
+    FOUNTAIN_FN[0] = GF.build_core
+    old = build(W)[1]
+    FOUNTAIN_FN[0] = GF.build_city
+    fx0, fx1, fz0, fz1 = P.FOUNTAIN
+    ys = [k[1] for k in list(old.c) + list(PK.c) if fx0 <= k[0] <= fx1 and fz0 <= k[2] <= fz1]
+    fin = lambda S: (lambda x, y, z: (lambda b: 'air' if b == 'plant' else ('stone' if b == 'ground' else b))(
+        S.c.get((x, y, z)) or W.block(x, y, z)))
+    fo, fn = fin(old), fin(PK)
+    fix = {(x, y, z): fn(x, y, z) for x in range(fx0, fx1 + 1) for z in range(fz0, fz1 + 1)
+           for y in range(min(ys), max(ys) + 1) if fo(x, y, z) != fn(x, y, z)}
+    xs = [k[0] for k in fix]; yy = [k[1] for k in fix]; zs = [k[2] for k in fix]
+    o = (min(xs), min(yy), min(zs))
+    rel = {(x - o[0], y - o[1], z - o[2]): b for (x, y, z), b in fix.items()}
+    order = dl.compute_order(rel)
+    dl.save(rel, out, order)
+    terr = lambda x, y, z: fo(x + o[0], y + o[1], z + o[2])
+    errs = dl.check_water(rel, terr)
+    se, wr = dl.check_supports(rel, order, terr)
+    print(f'city-1-fix-1.json: origin {o[0]} {o[1]} {o[2]} | записей {len(fix)} (фонтан «Сити» вместо отклонённого, '
+          f'поверх построенного city-1-parks)')
+    print(f'city-1-fix-1.json: опоры/вода/порядок постройки (decor_lib, порядок бота): ошибок {len(errs) + len(se)} | '
+          f'предупреждений {len(wr)}')
+    for m in (errs + se + wr)[:4]: print('   ', m)
+    best = min((sum(1 for k, b in GF.build_city(GF.PALETTES['med'], fx0, fy, fz0).items() if fn(*k) != b), fy)
+               for fy in range(60, 76))
+    print(f'после исправления фонтан совпадает с «Сити» (§5.3, слой y0 = Y {best[1]}): расхождений {best[0]}')
 
 
 def preview(path, final, H, net, wx, W_):

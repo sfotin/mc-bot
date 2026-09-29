@@ -38,8 +38,10 @@ REGISTRY = {
           'oldtown-8-k5.json': 'oldtown-8-k5.json', 'f.json': 'oldtown-8-fix-1.json'}),
     ],
     'city': [
-        ('gen_city_1.py', ['--outdir', '{T}', '--preview', ''],
-         {'city-1-streets.json': 'city-1-streets.json', 'city-1-parks.json': 'city-1-parks.json'}),
+        ('gen_city_1.py', ['--outdir', '{T}', '--preview', '', '--fix-fountain', '{T}/f.json'],
+         {'city-1-streets.json': 'city-1-streets.json', 'city-1-parks.json': 'city-1-parks.json',
+          'f.json': 'city-1-fix-1.json'}),
+        ('gen_city_4.py', ['--out', '{T}/a.json', '--preview', ''], {'a.json': 'city-4-opener.json'}),
     ],
 }
 
