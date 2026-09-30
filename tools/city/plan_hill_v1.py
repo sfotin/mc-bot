@@ -1,6 +1,6 @@
 """План района «Холм E» v1 (CITY.md §7.6): рельеф + всё построенное (world_model.py), телебашня
-schemas/ostankino.json на вершине, Башенная площадь, смотровая «Над парком» с Театральной лестницей
-к верхнему ряду Зелёного театра, Северная лестница от Горной дороги, Парадная лестница от главного
+schemas/ostankino.json на вершине, Башенная площадь, смотровая «Над парком» (Театральная лестница отклонена
+владельцем — стенка театра не трогается), Северная лестница от Горной дороги, Парадная лестница от главного
 проспекта (продолжение проспекта до X −593), этапы, резерв трасс, разрезы по Z 1785 и X −606.
 
 Запуск: plan_hill_v1.py [--out docs/districts/hill-plan-v1.png]
@@ -22,7 +22,7 @@ sys.path.insert(0, _HERE)
 from world_model import World, REPO  # noqa: E402
 
 X0, X1, Z0, Z1 = -642, -593, 1764, 1826      # окно картинки (восточнее X −593 рельефа нет)
-DX0, DX1, DZ0, DZ1 = -624, -593, 1774, 1820  # район: зона генплана Z 1776…1807 + север до 1774, юг — проспект
+DX0, DX1, DZ0, DZ1 = -624, -593, 1773, 1820  # район: зона генплана Z 1776…1807 + север до 1773, юг — проспект
 S = 12
 ML, MT = 46, 30
 PLAZA_Y = 78                                  # блок мощения площади (ходим по 79.0)
@@ -42,10 +42,8 @@ STREETS = [
 ]
 # ---- лестницы: (ключ, подпись, клетки-прямоугольники, этап) ----
 STAIRS = {
-    'st_th': ('Театральная лестница', [(-626, -620, 1785, 1786)], 1),
-    'st_n': ('Северная лестница', [(-624, -611, 1774, 1775), (-612, -610, 1776, 1776)], 1),
-    'st_s': ('Парадная лестница', [(-609, -603, 1806, 1812), (-615, -597, 1804, 1805), (-617, -616, 1802, 1805),
-                                   (-596, -595, 1802, 1805)], 1),
+    'st_n': ('Северная лестница', [(-624, -624, 1773, 1776), (-623, -608, 1775, 1776)], 1),
+    'st_s': ('Парадная лестница', [(-609, -603, 1806, 1812), (-615, -597, 1804, 1806)], 1),
 }
 # ---- объекты: (ключ, подпись, X0, X1, Z0, Z1, этап, здание?, цвет) ----
 OBJ = [
@@ -57,8 +55,27 @@ OBJ = [
 ]
 RESERVE = [('метро 1 + коллектор', -624, -593, 1812, 1820)]
 LOADER = {(cx, cz) for cx in range(-41, -37) for cz in range(114, 119)} | {(-40, 119), (-39, 119), (-38, 119), (-39, 120), (-38, 120)}
-OK_PAIRS = [('av', 'av_n'), ('av', 'av_s'), ('av_n', 'st_s'), ('st_s', 'plaza'), ('plaza', 'west'), ('west', 'st_th'),
-            ('st_n', 'plaza'), ('tv', 'lobby'), ('tv', 'deck'), ('lobby', 'deck'), ('plaza', 'st_th')]
+OK_PAIRS = [('av', 'av_n'), ('av', 'av_s'), ('av_n', 'st_s'), ('st_s', 'plaza'), ('plaza', 'west'),
+            ('st_n', 'plaza'), ('tv', 'lobby'), ('tv', 'deck'), ('lobby', 'deck')]
+PLAZA_R = 15.2                                # площадь — круг вокруг башни (на западе до X −620, дальше — смотровая)
+
+
+def avenue_profile():
+    """Проезжая часть проспекта X −624…−593 (тротуары +0.5): подъём по 0.5 в заданных точках (не чаще
+    чем через 4 блока); у Парадной лестницы (X −611…−600) ровно: 65.5, тротуар 66.0."""
+    ups = (-616, -612, -599, -595)
+    return {x: 64.5 + 0.5 * sum(1 for u in ups if x >= u) for x in range(-624, -592)}
+
+
+def zones():
+    """Клетки плана: площадь, смотровая, основание башни, лестницы (генератор берёт отсюда)."""
+    disc = tv_disc()
+    st = {k: set().union(*(rc(*r) for r in rects)) for k, (_, rects, _) in STAIRS.items()}
+    allst = set().union(*st.values())
+    plaza = {(x, z) for x in range(-620, -592) for z in range(1774, 1804)
+             if math.hypot(x - TV_C[0], z - TV_C[1]) <= PLAZA_R or (-617 <= x <= -595 and z >= 1792)} - disc - allst
+    west = rc(-624, -619, 1779, 1796) - plaza
+    return dict(disc=disc, plaza=plaza, west=west, stairs=st)
 
 
 def rc(x0, x1, z0, z1):
@@ -92,13 +109,13 @@ def main():
     for k, _, x0, x1, z0, z1, *_ in OBJ:
         c = rc(x0, x1, z0, z1)
         if k == 'tv': c = disc
-        if k == 'plaza': c = {(x, z) for x, z in c if math.hypot(x - TV_C[0], z - TV_C[1]) <= 14.6} - disc
+        if k == 'plaza': c = zones()['plaza']
+        if k == 'west': c = zones()['west']
         if k == 'lobby': c = tv_disc(8.5)
         if k == 'deck': c = tv_disc(6.5)
         foot[k] = c; add(k, c)
-    outside = sorted({k for c_, v in area.items() for k in v
-                      if not (DX0 <= c_[0] <= DX1 and DZ0 <= c_[1] <= DZ1) and not (k == 'st_th' and c_[0] >= -626)})
-    print('вне района (Театральная лестница входит в стенку театра на X −626/−625 — допустимо):', outside or 'нет')
+    outside = sorted({k for c_, v in area.items() for k in v if not (DX0 <= c_[0] <= DX1 and DZ0 <= c_[1] <= DZ1)})
+    print('вне района:', outside or 'нет')
     okp = {frozenset(p) for p in OK_PAIRS}
     bad = sorted({tuple(sorted(set(v))) for v in area.values()
                   if len(set(v)) > 1 and not all(frozenset((a, b)) in okp for a in set(v) for b in set(v) if a < b)})
@@ -122,7 +139,7 @@ def main():
     print('объекты без мощёной дорожки от проспекта:', lone or 'нет', f'| мощёных клеток в сети {nseen}')
     print('стыки: проспект парка (X −625, Z 1816) рядом с сетью:', (-624, 1816) in seen,
           '| Горная дорога (X −625, Z 1771…1773) — низ Северной лестницы (−624, 1774):', (-624, 1774) in seen,
-          '| верхний ряд театра (−627, 1785) — низ Театральной лестницы:', (-626, 1785) in seen)
+          )
     print('НЕГАТИВ: без Парадной лестницы площадь с проспекта недостижима:', 'plaza' in lonely(('st_s',))[0])
     print('НЕГАТИВ: без площади смотровая отрезана от проспекта:', 'west' in lonely(('plaza',))[0])
     print('НЕГАТИВ: без площади вестибюль в основании недостижим:', 'lobby' in lonely(('plaza',))[0])
@@ -130,12 +147,7 @@ def main():
           'plaza' in lonely(('av_n',))[0])
 
     # лестницы: подъём по маршу и площадки
-    av_prof = {}
-    y, last = 64.5, -625
-    for x in range(-624, -592):
-        g = sum(W.surf(x, z) for z in range(1813, 1821)) / 8
-        if g + 1 - y >= 1.5 and x - last >= 4: y += 0.5; last = x
-        av_prof[x] = y
+    av_prof = avenue_profile()
     cut = max(max(W.surf(x, z) for z in range(1813, 1821)) + 1 - av_prof[x] for x in av_prof)
     fill = max(av_prof[x] - (min(W.surf(x, z) for z in range(1813, 1821)) + 1) for x in av_prof)
     slope = max(abs(av_prof[x + 1] - av_prof[x]) for x in range(-624, -593))
@@ -144,8 +156,7 @@ def main():
     walk = PLAZA_Y + 1
     sw = av_prof[-606] + 0.5                                    # тротуар Z 1813 на 0.5 выше проезжей части
     runs = {
-        'Театральная': (72.0, walk, 7, [7]),                     # верхний ряд театра 71 (ходим 72) → смотровая
-        'Северная': (65.0, walk, 14, [7, 7]),                    # край Горной дороги 65.0 → площадь (2 марша, площадка)
+        'Северная': (65.0, walk, 14 + 2, [7, 7]),                # край Горной дороги 65.0 → 2 марша по 7, площадка 72
         'Парадная': (sw, walk, 7 + 2 + 6, [7, 6]),               # тротуар → центр. марш 7 → площадка 73 → боковые марши 6
     }
     for n, (a, b, run, flights) in runs.items():
@@ -174,10 +185,9 @@ def main():
     ymax = max(b['y'] for b in T)
     print(f'телебашня: {len(T)} бл., 23×{ymax + 1}×23, origin ({TV_C[0] - 11}, {PLAZA_Y}, {TV_C[1] - 11}), верх Y {PLAZA_Y + ymax} '
           f'(предел 255), «тарелка» — пол y 57 → Y {PLAZA_Y + 57}, ходим {PLAZA_Y + 58}…{PLAZA_Y + 63}')
-    built = [k for k, c in foot.items() if any((x, y_, z) in W.pre for x, z in c for y_ in range(60, 130)) and k != 'st_th']
-    print('объекты поверх построенного (кроме Театральной лестницы — проход в стенке театра):', built or 'нет')
-    th = [(z, W.surf(-626, z)) for z in (1785, 1786)]
-    print('стенка театра в проходе X −626:', th, '→ разобрать выше ступеней (исправление парка, в этапе 1)')
+    built = [k for k, c in foot.items() if any((x, y_, z) in W.pre and W.pre[(x, y_, z)] not in ('grass', 'air')
+                                               for x, z in c for y_ in range(60, 130))]
+    print('объекты поверх построенного (газон парка на X −624…−621 не в счёт):', built or 'нет')
 
     # ---------- картинка ----------
     def colr(x, z):
@@ -241,8 +251,8 @@ def main():
         for i in range((x1 - x0 + 1) if along_x else (z1 - z0 + 1)):
             if along_x: dr.line([px(x0 + i), pz(z0), px(x0 + i), pz(z1 + 1)], fill=(120, 90, 50, 200), width=1)
             else: dr.line([px(x0), pz(z0 + i), px(x1 + 1), pz(z0 + i)], fill=(120, 90, 50, 200), width=1)
-    hatch(-626, -620, 1785, 1786, True); hatch(-624, -611, 1774, 1775, True)
-    hatch(-609, -603, 1806, 1812, False); hatch(-615, -610, 1804, 1805, True); hatch(-602, -597, 1804, 1805, True)
+    hatch(-623, -617, 1775, 1776, True); hatch(-614, -608, 1775, 1776, True)
+    hatch(-608, -604, 1806, 1812, False); hatch(-614, -609, 1804, 1805, True); hatch(-603, -598, 1804, 1805, True)
     for k, name, x0, x1, z0, z1, st, bld, fill in OBJ:
         if k in ('plaza', 'west'): continue
         c = foot[k]
@@ -260,7 +270,8 @@ def main():
                    outline=col, width=2)
     # парапет смотровой и стрелки лестниц
     dr.line([px(-624), pz(1779), px(-624), pz(1797)], fill=(90, 70, 40), width=4)
-    for (ax, az), (bx, bz) in (((-626, 1786), (-619, 1786)), ((-624, 1775), (-611, 1775)), ((-606, 1813), (-606, 1806)),
+    dr.line([px(-623), pz(1775), px(-607), pz(1775)], fill=(90, 70, 40), width=3)      # парапет Северной лестницы (Z 1774)
+    for (ax, az), (bx, bz) in (((-624, 1776), (-608, 1776)), ((-606, 1813), (-606, 1806)),
                                ((-607, 1805), (-615, 1805)), ((-605, 1805), (-597, 1805))):
         dr.line([px(ax) + S // 2, pz(az), px(bx) + S // 2, pz(bz)], fill=(160, 40, 30), width=2)
         dr.ellipse([px(bx) + S // 2 - 3, pz(bz) - 3, px(bx) + S // 2 + 3, pz(bz) + 3], fill=(160, 40, 30))
@@ -320,8 +331,8 @@ def main():
     ZC = 1786
     for x in range(X0, X1 + 1):
         g = W.surf(x, ZC); tags = area.get((x, ZC), [])
-        top = (72 + (x + 626)) if 'st_th' in tags else PLAZA_Y if any(t in tags for t in ('plaza', 'west', 'tv')) else g
-        dr.rectangle([ex(x), ey(top + 1), ex(x + 1) - 1, ebase], fill=STAIR[:3] if 'st_th' in tags else (205, 195, 170))
+        top = PLAZA_Y if any(t in tags for t in ('plaza', 'west', 'tv')) else g
+        dr.rectangle([ex(x), ey(top + 1), ex(x + 1) - 1, ebase], fill=(205, 195, 170))
         dr.line([ex(x), ey(g + 1), ex(x + 1) - 1, ey(g + 1)], fill=(120, 80, 40), width=1)
     col = {'concrete:0': (235, 235, 235), 'concrete:14': (190, 40, 40), 'concrete:7': (90, 90, 90),
            'glass': (140, 200, 235), 'glowstone': (250, 220, 90)}
@@ -372,7 +383,6 @@ def main():
     lines += [(f' {num[k]}. {n}', False) for k, n, st in items if st == 1]
     lines += [(' проспект X −624…−593 с тротуарами,', False), ('   фонари в ритме парка, подъём 1:8;', False),
               (' площадь 79.0 вокруг башни, газоны,', False), ('   деревья, фонари, скамейки;', False),
-              (' проход в стенке Зелёного театра', False), ('   (исправление парка)', False),
               ('', False), ('Этап 2 — башня внутри (одна порция):', True)]
     lines += [(f' {num[k]}. {n}', False) for k, n, st in items if st == 2]
     lines += [(' остеклённый павильон между опорами,', False), ('   электрощитовая 3×3 с шахтой;', False),

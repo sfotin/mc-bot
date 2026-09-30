@@ -55,6 +55,10 @@ REGISTRY = {
          {'park-1-ground.json': 'park-1-ground.json', 'park-1-build.json': 'park-1-build.json'}),
         ('gen_park_2.py', ['--out', '{T}/a.json', '--preview', ''], {'a.json': 'park-2-zoo.json'}),
     ],
+    'hill': [
+        ('gen_hill_1.py', ['--outdir', '{T}', '--preview', ''],
+         {'hill-1-ground.json': 'hill-1-ground.json', 'hill-1-tower.json': 'hill-1-tower.json'}),
+    ],
 }
 
 ZERO = [r'опоры/вода/порядок[^:]*: ошибок (\d+)', r'опоры/вода/порядок: ошибок (\d+)', r'предупреждений (\d+)',
