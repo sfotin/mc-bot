@@ -47,6 +47,8 @@ REGISTRY = {
                          'city-7-decks.json', 'city-7-ring.json')}),
         ('gen_city_6.py', ['--outdir', '{T}', '--preview', ''],
          {'city-6-pebbles.json': 'city-6-pebbles.json', 'city-6-summit.json': 'city-6-summit.json'}),
+        ('gen_city_8.py', ['--outdir', '{T}', '--preview', ''],
+         {'city-8-fix-1.json': 'city-8-fix-1.json', 'city-8-balloons.json': 'city-8-balloons.json'}),
     ],
 }
 
