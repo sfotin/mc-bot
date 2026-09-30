@@ -45,6 +45,8 @@ REGISTRY = {
         ('gen_city_5.py', ['--outdir', '{T}', '--preview', ''],
          {n: n for n in ('city-5-gate.json', 'city-5-bridge.json', 'city-6-sail.json', 'city-7-spiral.json',
                          'city-7-decks.json', 'city-7-ring.json')}),
+        ('gen_city_6.py', ['--outdir', '{T}', '--preview', ''],
+         {'city-6-pebbles.json': 'city-6-pebbles.json', 'city-6-summit.json': 'city-6-summit.json'}),
     ],
 }
 

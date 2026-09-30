@@ -281,12 +281,16 @@ def path_heights(W, cells, fixed, skip=()):
                 if n in H and n not in d: d[n] = d[p] + 1; q.append(n)
         for c, k in d.items():
             if c in H and c not in fixed: H[c] = min(max(H[c], h0 - 0.5 * k), h0 + 0.5 * k)
+    fmin = {c: W.cave_top(*c) + 4 for c in H if W.cave_top(*c) is not None and W.cave_top(*c) + 4 > W.surf(*c) - 6}
+    for c, v in fmin.items():                        # над пустотой: кровля под дорожкой не тоньше 3 блоков
+        if c not in fixed and H[c] < v: H[c] = float(v)
     for _ in range(300):
         ch = False
         for c in H:
             if c in fixed: continue
             m = min([H[(c[0] + a, c[1] + b)] + 0.5 for a, b in N4 if (c[0] + a, c[1] + b) in H] +
                     [anchors[(c[0] + a, c[1] + b)] + 0.5 for a, b in N4 if (c[0] + a, c[1] + b) in anchors])
+            m = max(m, fmin.get(c, -1e9))
             if H[c] > m: H[c] = m; ch = True
         if not ch: break
     for _ in range(300):                             # подъём к фиксированным (пороги дверей) — не ниже соседа − 0.5
@@ -295,8 +299,8 @@ def path_heights(W, cells, fixed, skip=()):
             if c in fixed: continue
             nb = [H[(c[0] + a, c[1] + b)] for a, b in N4 if (c[0] + a, c[1] + b) in H] + \
                  [anchors[(c[0] + a, c[1] + b)] for a, b in N4 if (c[0] + a, c[1] + b) in anchors and (c[0] + a, c[1] + b) not in H]
-            lo, hi = max(nb) - 0.5, min(nb) + 0.5
-            if lo <= hi and H[c] < lo: H[c] = lo; ch = True
+            lo = max(nb) - 0.5
+            if H[c] < lo: H[c] = lo; ch = True
         if not ch: break
     bad = [(c, n) for c in H for a, b in N4 for n in [(c[0] + a, c[1] + b)]
            if (n in H and abs(H[c] - H[n]) > 0.5) or (n in anchors and n not in H and abs(H[c] - anchors[n]) > 0.5)]
