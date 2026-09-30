@@ -67,6 +67,9 @@ BUILT = (
     ('hill-1-ground.json', (-624, 63, 1773)),           # Холм E: проспект до X −593, площадь, лестницы, откосы
     ('hill-1-tower.json', (-617, 60, 1779)),            # телебашня и её внутреннее (стремянки на фонарях колонны отлетели — fix-1)
     ('hill-1-fix-1.json', (-624, 79, 1777)),            # Холм E, исправление: скамейки, рамы дверей, стремянка, свет, стеклянная «тарелка»
+    ('mount-1-ground.json', (-624, 70, 1728)),          # Гора F, этап 1 (по съёмке 2026-09-30 отличий 129 бл.: снег на площади,
+    ('mount-1-tower.json', (-624, 63, 1758)),           #   часть ротонды и стекла вершины, кровля и южная стена приюта — правки владельца);
+    ('mount-1-build.json', (-624, 60, 1735)),           #   концепция отклонена — всё, кроме Горной площади, сносится (CITY.md §7.7, ред. 2)
 )
 # Ручные правки владельца в Сити после city-1 (не описаны, в модели мира нет) — перед работой рядом уточнить.
 # Ручные правки владельца после oldtown-7/8-fix-1 (по скриншотам, блоков нет — в модели мира их нет,
@@ -84,11 +87,20 @@ def built_before(schema):
 
 
 class World:
-    def __init__(self, built=BUILT, repo=REPO):
+    def __init__(self, built=BUILT, repo=REPO, ext=False):
         d = json.load(open(os.path.join(repo, 'docs', 'terrain', 'site.json')))
         self._d = d
         self._W, self._X0, self._Z0 = d['w'], d['x0'], d['z0']
         self._cv = json.load(open(os.path.join(repo, 'docs', 'terrain', 'caves.json')))
+        # вне участка — съёмка окрестностей горы F (docs/terrain/mount.json, снята 2026-09-30 с построенным;
+        # только для колонн вне участка site.json, где ничего не построено). Включается ext=True: генераторы,
+        # написанные раньше, читали колонны за краем участка «как есть» (индекс уходил в соседнюю строку) —
+        # без ext их поведение не меняется и построенные схемы воспроизводятся.
+        self._ext = []
+        for tf, cf in (('mount.json', 'mount-caves.json'),):
+            tp = os.path.join(repo, 'docs', 'terrain', tf)
+            if ext and os.path.exists(tp):
+                self._ext.append((json.load(open(tp)), json.load(open(os.path.join(repo, 'docs', 'terrain', cf)))))
         self.pre = {}
         for fn, o in built:
             for e in json.load(open(os.path.join(repo, 'schemas', fn))):
@@ -96,13 +108,28 @@ class World:
 
     def _i(self, x, z): return (z - self._Z0) * self._W + x - self._X0
 
-    def ground(self, x, z): return self._d['ground'][self._i(x, z)]
+    def inside(self, x, z): return 0 <= x - self._X0 < self._W and 0 <= z - self._Z0 < self._d['h']
 
-    def water(self, x, z): return self._d['water'][self._i(x, z)]
+    def _src(self, x, z):
+        """(данные рельефа, индекс колонны, пустоты): участок, иначе съёмка окрестностей; вне всего — ошибка."""
+        if self.inside(x, z): return self._d, self._i(x, z), self._cv
+        for d, cv in self._ext:
+            if 0 <= x - d['x0'] < d['w'] and 0 <= z - d['z0'] < d['h']:
+                return d, (z - d['z0']) * d['w'] + x - d['x0'], cv
+        if self._ext: raise IndexError(f'нет рельефа для колонны ({x}, {z})')
+        return self._d, self._i(x, z), self._cv          # прежнее поведение (без ext)
+
+    def ground(self, x, z): d, i, _ = self._src(x, z); return d['ground'][i]
+
+    def ground_block(self, x, z): d, i, _ = self._src(x, z); return d['groundBlock'][i]
+
+    def top(self, x, z): d, i, _ = self._src(x, z); return d['top'][i]
+
+    def water(self, x, z): d, i, _ = self._src(x, z); return d['water'][i]
 
     def block(self, x, y, z):
         if (x, y, z) in self.pre: return self.pre[(x, y, z)]
-        i = self._i(x, z); g = self._d['ground'][i]; w = self._d['water'][i]; t = self._d['top'][i]
+        d, i, _ = self._src(x, z); g = d['ground'][i]; w = d['water'][i]; t = d['top'][i]
         if y <= g: return 'ground'
         if w is not None and y <= w: return 'water'
         if t is not None and g < y <= t: return 'plant'
@@ -116,7 +143,7 @@ class World:
             if self.solid(self.block(x, y, z)): return y
 
     def cave_top(self, x, z):
-        c = self._cv; i = (z - c['z0']) * c['w'] + x - c['x0']
+        _, _, c = self._src(x, z); i = (z - c['z0']) * c['w'] + x - c['x0']
         a, m = c['air'][i] or 0, c['minAir'][i]
         return m + a - 1 if a and m is not None else None
 
