@@ -50,6 +50,10 @@ REGISTRY = {
         ('gen_city_8.py', ['--outdir', '{T}', '--preview', ''],
          {'city-8-fix-1.json': 'city-8-fix-1.json', 'city-8-balloons.json': 'city-8-balloons.json'}),
     ],
+    'park': [
+        ('gen_park_1.py', ['--outdir', '{T}', '--preview', ''],
+         {'park-1-ground.json': 'park-1-ground.json', 'park-1-build.json': 'park-1-build.json'}),
+    ],
 }
 
 ZERO = [r'опоры/вода/порядок[^:]*: ошибок (\d+)', r'опоры/вода/порядок: ошибок (\d+)', r'предупреждений (\d+)',
