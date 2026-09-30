@@ -44,14 +44,21 @@ LADDER = (CX, CZ + 1)                                     # стремянка �
 POD = PY + 57                                             # пол «тарелки» Y 135
 LANDINGS = [PY + 1 + 12 * i for i in (1, 2, 3, 4)]        # площадки отдыха: ходим 91, 103, 115, 127
 RES = lambda x, z: 1812 <= z <= 1820                      # резерв трасс под проспектом
+V2 = False                                                # вариант 2 (замечания владельца после постройки, --v2)
+POD_R = 9.5                                               # v2: «тарелка» расширена до r 9.5 (было ≈6)
+FIX = 'hill-1-fix-1.json'
 LAWN = rect(-624, -593, 1773, 1827)                       # откосы и газоны (юг — до склона к промзоне)
 
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--outdir', default=os.path.join(REPO, 'schemas'))
-    p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'hill-1-preview.png'))
-    return p.parse_args()
+    p.add_argument('--preview', default=None)
+    p.add_argument('--v2', action='store_true', help='вариант 2 и исправление к построенной hill-1-fix-1.json')
+    a = p.parse_args()
+    if a.preview is None:
+        a.preview = os.path.join(REPO, 'docs', 'districts', 'hill-1-fix-1-preview.png' if a.v2 else 'hill-1-preview.png')
+    return a
 
 
 def col_put(S, x, z, h, full, slab, fill='stone'):
@@ -191,7 +198,9 @@ def ground(W):
         if kind[c] not in ('plaza', 'west', 'disc'): continue
         if any(top_of((c[0] + a, c[1] + b)) <= H[c] - 2 for a, b in N4):
             if c in tvfoot: continue
-            G.put(c[0], PY + 1, c[1], 'sandstone:2'); G.put(c[0], PY + 2, c[1], 'stone_slab:1'); parapet.append(c)
+            if V2: G.put(c[0], PY + 1, c[1], 'glass_pane'); G.put(c[0], PY + 2, c[1], 'glass_pane')    # v2: стекло «в пол», 2 бл.
+            else: G.put(c[0], PY + 1, c[1], 'sandstone:2'); G.put(c[0], PY + 2, c[1], 'stone_slab:1')
+            parapet.append(c)
     # ---- скамейки: смотровая — 3 лицом к парку (на запад), площадь — у южного парапета лицом к башне
     #      и у северного края лицом к башне; урны между ними
     benches, urns = [], []
@@ -212,9 +221,13 @@ def ground(W):
         dz = 1 if face == 's' else -1
         fr = [(x0 + i, z0 + dz) for i in range(1, 3)]
         if free_line(cs) and free_line(fr):
+            if V2 and z0 == 1802: busy |= set(cs) | set(fr); continue      # v2: у выходов Парадной — убраны, см. ниже
             bench(G, x0, WALK, z0, face); benches.append((x0, z0, face)); busy |= set(cs) | set(fr)
     for u in ((-622, 1784), (-622, 1790), (-611, 1802), (-603, 1802)):
-        if free_line([u]): G.put(u[0], WALK, u[1], 'cauldron'); urns.append(u); busy.add(u)
+        if free_line([u]):
+            busy.add(u)
+            if V2 and u[1] == 1802: continue
+            G.put(u[0], WALK, u[1], 'cauldron'); urns.append(u)
     # ---- фонари: проспект (ритм парка −656, −648 … → −624, −616 …) на лотках; площадь, смотровая,
     #      лестницы — на мощении/газоне, чтобы вся сеть была в пределах 5 блоков от фонаря
     lamps = []
@@ -227,6 +240,10 @@ def ground(W):
             h = H[(x, z)]
             if h != int(h): G.put(x, int(h), z, 'double_stone_slab')
             lamp_on(x, z, math.ceil(h))
+    exits = {c for c in net if kind[c] == 'st' and H[c] == WALK and any(
+        kind.get((c[0] + a, c[1] + b)) in ('plaza', 'west') for a, b in N4)}
+    land = {(c[0] + a, c[1] + b) for c in exits for a, b in N4 if kind.get((c[0] + a, c[1] + b)) in ('plaza', 'west')}
+    near_exit = lambda c: V2 and any(max(abs(c[0] - l[0]), abs(c[1] - l[1])) <= 2 for l in land)   # v2: у выходов лестниц — свободно
     lit = lambda c: any(max(abs(c[0] - l[0]), abs(c[1] - l[1])) <= 5 for l in lamps)
     cand = sorted((c for c in plaza | west if c not in busy and c not in front and c not in legs
                    and not any((c[0] + a, c[1] + b) in legs or (c[0] + a, c[1] + b) in st['st_n'] | st['st_s'] for a, b in N4)
@@ -234,6 +251,7 @@ def ground(W):
     need = {c for c in net if kind[c] in ('plaza', 'west', 'st')}
     for c in cand:
         if all(lit(p) for p in need): break
+        if near_exit(c): continue
         if lit(c) and all(lit(p) for p in need if max(abs(p[0] - c[0]), abs(p[1] - c[1])) <= 5): continue
         if any(max(abs(c[0] - l[0]), abs(c[1] - l[1])) < 6 for l in lamps): continue
         lamp_on(c[0], c[1], WALK); busy.add(c)
@@ -243,6 +261,14 @@ def ground(W):
         for i, b in enumerate(LAMP[1:]): G.put(c[0], y + 1 + i, c[1], b)
         for yy in range(y + len(LAMP), G.plant_top(*c) + 1): G.put(c[0], yy, c[1], 'air')
         lamps.append(c)
+    # ---- v2: южные скамейки — между выходами Парадной и проходом в башню (не ближе 2 к выходам лестниц)
+    if V2:
+        lampset0 = set(lamps)
+        for (x0, z0) in ((-611, 1802), (-604, 1802)):
+            cs = [(x0 + i, z0) for i in range(4)]
+            fr = [(x0 + i, z0 - 1) for i in range(1, 3)]
+            if all(c in net and c not in lampset0 and c not in legs and H[c] == WALK for c in cs + fr):
+                bench(G, x0, WALK, z0, 'n'); benches.append((x0, z0, 'n'))
     # ---- деревья на газонах (берёза, дуб): не ближе 2 к мощению, фонарям, парапетам, башне
     trees = []
     lampset = set(lamps)
@@ -281,7 +307,7 @@ def ground(W):
         for yy in range(cv['minAir'][i], y):
             k = (x, yy, z)
             if k not in G.c: G.put(x, yy, z, 'stone'); plugged += 1
-    return dict(rail=rail, plugged=plugged, G=G, H=H, kind=kind, net=net, lawn=lawn, parapet=parapet, lamps=lamps, benches=benches, urns=urns,
+    return dict(exits=exits, rail=rail, plugged=plugged, G=G, H=H, kind=kind, net=net, lawn=lawn, parapet=parapet, lamps=lamps, benches=benches, urns=urns,
                 trees=trees, flowers=flowers, lit_floor=lit_floor, Z=Z, busy=busy, tvfoot=tvfoot)
 
 
@@ -307,9 +333,16 @@ def tower(W, G):
     L.shell()
     L.door(CX, CZ + 8, 3); L.door(CX, CZ - 8, 1)
     L.room('Электрощитовая', (CX + 4, CX + 6, CZ - 1, CZ + 1), (CX + 3, CZ, 0), shaft=(CX + 6, CZ + 1))
+    if V2:                                                  # рама двери из полных блоков: стекло-панель у двери даёт щели
+        for (x, y, z, m) in L.doors:
+            side = [(x - 1, z), (x + 1, z)] if m in (1, 3) else [(x, z - 1), (x, z + 1)]
+            for (sx, sz) in side:
+                for yy in (y, y + 1, y + 2): L.put(sx, yy, sz, 'concrete:0')
+            L.put(x, y + 2, z, 'concrete:0')
     for k, b in L.cells.items(): T.put(*k, b)
     # центральная колонна и стремянка до пола «тарелки»; лаз в кровле вестибюля и в полу «тарелки»
-    for y in range(PY + 1, POD + 1): T.put(CX, y, CZ, 'sea_lantern' if (y - PY) % 6 == 0 else 'concrete:0')   # свет в стволе
+    for y in range(PY + 1, POD + 1):                         # v1: морские фонари в колонне — стремянка на них не держится
+        T.put(CX, y, CZ, 'sea_lantern' if (y - PY) % 6 == 0 and not V2 else 'concrete:0')
     for y in range(PY + 1, POD + 1): T.put(LADDER[0], y, LADDER[1], 'ladder:3')
     # площадки отдыха: верхние полублоки кварца вокруг стремянки (не в стенах ствола)
     land_cells = [(CX - 1, CZ + 1), (CX + 1, CZ + 1), (CX - 1, CZ + 2), (CX, CZ + 2), (CX + 1, CZ + 2)]
@@ -319,6 +352,7 @@ def tower(W, G):
             k = (x - OX, w - 1 - PY, z - OZ)
             if k in rel or any((x - OX, w - PY + d, z - OZ) in rel for d in (0, 1)): continue
             T.put(x, w - 1, z, 'stone_slab:15'); placed.append((x, w - 1, z))
+    if V2: return tower_v2(T, L, rel, land_cells, placed)
     # пол «тарелки»: над стволом — стекло (смотреть вниз), кроме лаза стремянки
     glass_floor = 0
     for x in range(CX - 6, CX + 7):
@@ -348,16 +382,82 @@ def tower(W, G):
     return dict(T=T, L=L, placed=placed, glass_floor=glass_floor, pod_b=pod_b, cafe=cafe, deck=deck)
 
 
+def tower_v2(T, L, rel, land_cells, placed):
+    """v2: свет внутри ствола, «тарелка» r 9.5 — пол, стены и потолок стеклянные (стены «в пол»),
+    по краю — белый и красный пояс; скамейки у окон, кафе; свет — морские фонари в полу и потолке."""
+    # свет в стволе: морские фонари у внутренней стороны оболочки через 5 блоков по высоте, через 3 по кругу
+    lights = []
+    avoid = {(CX, CZ), LADDER} | set(land_cells)
+    for yr in range(8, 90, 5):
+        if 55 <= yr <= 65: continue
+        ring = []
+        for (x, y, z) in rel:
+            if y != yr: continue
+            dx, dz = x - 11, z - 11
+            if dx == 0 and dz == 0: continue
+            nx, nz = (x - (dx > 0) + (dx < 0), z) if abs(dx) >= abs(dz) else (x, z - (dz > 0) + (dz < 0))
+            if (nx, yr, nz) in rel or math.hypot(nx - 11, nz - 11) >= math.hypot(dx, dz): continue
+            a = (OX + nx, PY + yr, OZ + nz)
+            if (a[0], a[2]) in avoid or T.c.get(a, 'air') != 'air': continue
+            ring.append((math.atan2(dz, dx), a))
+        ring = sorted(set(ring))
+        for i, (_, a) in enumerate(ring):
+            if i % 3 == 0: T.put(*a, 'sea_lantern'); lights.append(a)
+    # «тарелка»: снять старую (y 57…64), поставить новую
+    for (x, y, z), b in rel.items():
+        if 57 <= y <= 64: T.put(OX + x, PY + y, OZ + z, 'air')
+    glass_floor, deck = 0, set()
+    lan = []
+    for x in range(CX - 10, CX + 11):
+        for z in range(CZ - 10, CZ + 11):
+            r = math.hypot(x - CX, z - CZ)
+            if r > POD_R: continue
+            rim = r > POD_R - 1
+            if (x, z) == LADDER: pass
+            elif (x, z) == (CX, CZ): pass
+            else:
+                fl = 'concrete:0' if rim else 'glass'
+                if not rim and abs(r - 5) < 0.5 and (x + 2 * z) % 4 == 0: fl = 'sea_lantern'; lan.append((x, POD, z))
+                T.put(x, POD, z, fl); glass_floor += fl == 'glass'
+            for y in range(POD + 1, POD + 7): T.put(x, y, z, 'glass' if rim else 'air')
+            ce = 'concrete:14' if rim else 'glass'
+            if not rim and abs(r - 6.5) < 0.5 and (2 * x + z) % 4 == 0: ce = 'sea_lantern'; lan.append((x, POD + 7, z))
+            if (x - OX, 65, z - OZ) in rel and not rim: ce = 'concrete:14'            # под стенками верхнего ствола
+            T.put(x, POD + 7, z, ce)
+            if not rim and (x, z) != LADDER: deck.add((x, z))
+    pod_b = []
+    for (x0, z0, face) in ((CX - 1, CZ - 7, 'n'), (CX - 1, CZ + 7, 's'), (CX + 7, CZ - 1, 'e'), (CX - 7, CZ - 1, 'w')):
+        cells = [(x0 + i, z0) for i in range(4)] if face in ('n', 's') else [(x0, z0 + i) for i in range(4)]
+        d = {'n': (0, -1), 's': (0, 1), 'e': (1, 0), 'w': (-1, 0)}[face]
+        fr = [(c[0] + d[0], c[1] + d[1]) for c in cells[1:3]]
+        if all(c in deck for c in cells + fr):
+            bench(T, x0, POD + 1, z0, face); pod_b.append((x0, z0, face))
+    cafe = []
+    for (x, z, b) in ((CX - 1, CZ + 4, 'quartz_stairs:5'), (CX, CZ + 4, 'stone_slab:15'), (CX + 1, CZ + 4, 'quartz_stairs:4')):
+        T.put(x, POD + 1, z, b); cafe.append((x, z))
+    for (x, z) in ((CX - 4, CZ + 3), (CX + 4, CZ + 3), (CX - 4, CZ - 3), (CX + 4, CZ - 3)):
+        T.put(x, POD + 1, z, 'fence'); T.put(x, POD + 2, z, 'wooden_pressure_plate'); cafe.append((x, z))
+    return dict(T=T, L=L, placed=placed, glass_floor=glass_floor, pod_b=pod_b, cafe=cafe, deck=deck, lights=lights, pod_lan=lan)
+
+
 def main():
     args = parse_args()
     try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception: pass
+    global V2
     names = [b[0] for b in BUILT]
     W = World(built_before(NAMES[0])) if NAMES[0] in names else World()
+    if args.v2:                                              # построенное (v1) — для исправления
+        R1 = ground(W); Q1 = tower(W, R1['G'])
+        OLD = dict(R1['G'].c); OLD.update(Q1['T'].c)
+        V2 = True
     R = ground(W)
     G, H, net = R['G'], R['H'], R['net']
     Q = tower(W, G)
     T, L = Q['T'], Q['L']
+    if V2:
+        print(f'v2: свет в стволе — {len(Q["lights"])} морских фонарей, в «тарелке» — {len(Q["pod_lan"])}; «тарелка» r {POD_R}, '
+              f'палуба {len(Q["deck"])} кл.; парапеты площади и смотровой — стекло-панели 2 бл.; рамы дверей; колонна без фонарей')
     print(f'сеть: клеток {len(net)} | покрытие Y {min(H.values())}…{max(H.values())} | парапетов {len(R["parapet"])} | '
           f'газонов/откосов {len(R["lawn"])} | фонарей {len(R["lamps"])} | деревьев {len(R["trees"])} | скамеек {len(R["benches"])} | '
           f'урн {len(R["urns"])} | цветов {R["flowers"]} | подсветка в мощении под башней {len(R["lit_floor"])}')
@@ -365,8 +465,10 @@ def main():
           f'щитовая {L.rooms} | стремянка Y {PY + 1}…{POD}, площадок {len(LANDINGS)} ({len(Q["placed"])} полублоков) | '
           f'стеклянный пол «тарелки» {Q["glass_floor"]} | скамеек в «тарелке» {len(Q["pod_b"])} | кафе {len(Q["cafe"])} предм.')
     outs = {}
+    import tempfile
+    tmp = tempfile.mkdtemp() if V2 else None
     for nm, S in zip(NAMES, (G, T)):
-        o, rel, order, dims = save_schema(S.c, os.path.join(args.outdir, nm))
+        o, rel, order, dims = save_schema(S.c, os.path.join(tmp if V2 else args.outdir, nm))
         outs[nm] = (o, rel, order)
         print(f'{nm}: origin {o[0]} {o[1]} {o[2]} | габарит {dims[0]} {dims[1]} {dims[2]} | записей {len(S.c)}')
 
@@ -381,11 +483,42 @@ def main():
             return 'stone' if b == 'ground' else ('air' if b == 'plant' else b)
         errs = dl.check_water(rel, terr)
         se, wr = dl.check_supports(rel, order, terr)
-        print(f'{nm}: опоры/вода/порядок постройки (decor_lib, порядок бота): ошибок {len(errs) + len(se)} | предупреждений {len(wr)}')
+        if not V2:                                           # v1 построена; ошибка найдена на сервере и исправлена в fix-1
+            known = [e for e in se if 'ladder' in e and 'sea_lantern' in e]
+            se = [e for e in se if e not in known]
+            if known: print(f'{nm}: известная ошибка v1 — стремянка на морских фонарях колонны ({len(known)} шт.), исправлена в {FIX}')
+        print(f'{nm}{" (v2)" if V2 else ""}: опоры/вода/порядок постройки (decor_lib, порядок бота): ошибок {len(errs) + len(se)} | предупреждений {len(wr)}')
         for m in (errs + se + wr)[:6]: print('   ', m)
         be = dl.check_bench_front(rel, terr)
         print(f'{nm}: скамейки (место для ног): ошибок {len(be)}', be[:3])
     ALL = dict(G.c); ALL.update(T.c)
+    if V2:                                                   # исправление к построенной (hill-1-ground + hill-1-tower)
+        def was(k):
+            b = OLD.get(k) or W.block(*k)
+            return 'air' if b == 'plant' else b
+        fix = {k: b for k, b in ALL.items() if was(k) != b}
+        for k, b in OLD.items():
+            if k not in ALL and b != 'air' and W.block(*k) in ('air', 'plant'): fix[k] = 'air'
+        lost = {(LADDER[0], y, LADDER[1]): 'ladder:3' for y in range(PY + 1, POD + 1)}   # стремянки отлетели — поставить заново
+        fix.update(lost)
+        fx = [k[0] for k in fix]; fy = [k[1] for k in fix]; fz = [k[2] for k in fix]
+        fo = (min(fx), min(fy), min(fz))
+        frel = {(x - fo[0], y - fo[1], z - fo[2]): b for (x, y, z), b in fix.items()}
+        forder = dl.compute_order(frel)
+        dl.save(frel, os.path.join(args.outdir, FIX), forder)
+
+        def fterr(x, y, z):
+            k = (x + fo[0], y + fo[1], z + fo[2])
+            b = was(k)
+            if k[0] == LADDER[0] and k[2] == LADDER[1] and b.startswith('ladder'): b = 'air'       # на сервере их нет
+            return 'stone' if b == 'ground' else b
+        fe = dl.check_water(frel, fterr); fs, fw = dl.check_supports(frel, forder, fterr)
+        from collections import Counter
+        print(f'{FIX}: origin {fo[0]} {fo[1]} {fo[2]} | записей {len(frel)} | состав {dict(Counter(b.split(":")[0] for b in fix.values()).most_common(8))}')
+        print(f'{FIX}: опоры/вода/порядок постройки поверх построенного: ошибок {len(fe) + len(fs)} | предупреждений {len(fw)}')
+        for m in (fe + fs + fw)[:6]: print('   ', m)
+        ok = all((fix.get(k) or was(k)) == b for k, b in ALL.items())
+        print('построенное + исправление = вариант 2:', ok)
 
     def fin_of(cells):
         def f(x, y, z):
@@ -436,6 +569,29 @@ def main():
     trel = {(OX + x, PY + y, OZ + z) for (x, y, z) in tower_rel()}
     fl = floating_over_paving(final, {k: b for k, b in ALL.items() if k not in trel}, items)   # опоры башни — арки, не предметы
     print('висящие над мощением (под предметом воздух или нижний полублок):', len(fl), fl[:4])
+    def near_exits(cells):
+        land = {(c[0] + a, c[1] + b) for c in R['exits'] for a, b in N4 if R['kind'].get((c[0] + a, c[1] + b)) in ('plaza', 'west')}
+        out = []
+        for (x, y, z), b in cells.items():
+            if (x, z) in net and y == math.ceil(H[(x, z)]) and b not in ('air',) and b.split(':')[0] not in ('stone_pressure_plate', 'glass_pane') \
+                    and any(max(abs(x - l[0]), abs(z - l[1])) <= 2 for l in land):
+                out.append((x, z, b))
+        return out
+    trel = {(OX + x, PY + y, OZ + z) for (x, y, z) in tower_rel()}
+    ne = near_exits({k: b for k, b in ALL.items() if k not in trel})
+    if V2: print('предметы у выходов с лестниц на площадь (≤ 2 от выхода):', len(ne), ne[:4])
+    else: print(f'известная ошибка v1 — скамейки у выходов с лестниц ({len(ne)} бл.), исправлено в {FIX}')
+
+    def door_gaps(fin):
+        out = []
+        for (x, y, z, m) in L.doors:
+            side = [(x - 1, z), (x + 1, z)] if m in (1, 3) else [(x, z - 1), (x, z + 1)]
+            for (sx, sz) in side + [(x, z)]:
+                for yy in ((y, y + 1, y + 2) if (sx, sz) != (x, z) else (y + 2,)):
+                    if fin(sx, yy, sz).split(':')[0] in ('glass_pane', 'stained_glass_pane'): out.append((sx, yy, sz))
+        return out
+    dg = door_gaps(final)
+    if V2: print('двери рядом со стеклом-панелью (щели): ошибок', len(dg), dg[:3])
     low = [k for k, b in ALL.items() if b != 'air' and k[1] < 60 and RES(k[0], k[2])]
     print('в резерве трасс ниже Y 60 —', len(low), low[:4])
     digs = {}
@@ -545,6 +701,12 @@ def main():
     negr[(bx_ - 1 - o[0], WALK - o[1], bz_ + 1 - o[2])] = 'leaves:4'
     terr0 = lambda x, y, z: (lambda b: 'stone' if b == 'ground' else ('air' if b == 'plant' else b))(W.block(x + o[0], y + o[1], z + o[2]))
     print('НЕГАТИВ: кашпо перед скамейкой: ошибок', len(dl.check_bench_front(negr, terr0)), '(ждём > 0)')
+    if V2:
+        negc = dict(ALL)
+        for i in range(4): negc[(-615 + i, WALK, 1802)] = 'birch_stairs:2'
+        print('НЕГАТИВ: скамейка v1 у выхода Парадной — найдена:', len(near_exits({k: b for k, b in negc.items() if k not in trel})) > len(ne))
+        negc = dict(ALL); d = L.doors[0]; negc[(d[0] - 1, d[1], d[2])] = 'stained_glass_pane:0'
+        print('НЕГАТИВ: панель у двери — щель найдена: ошибок', len(door_gaps(fin_of(negc))), '(ждём > 0)')
     if args.preview: preview(args.preview, final, R, Q)
 
 
@@ -614,11 +776,11 @@ def preview(path, final, R, Q):
     # план «тарелки»
     by = 300
     dr.text((bx2, by), 'План «тарелки» (Y 136): скамейки, кафе, стекло пола, лаз', fill='black', font=F(11))
-    for x in range(CX - 7, CX + 8):
-        for z in range(CZ - 7, CZ + 8):
+    for x in range(CX - 10, CX + 11):
+        for z in range(CZ - 10, CZ + 11):
             b = final(x, POD + 1, z)
             if b == 'air': b = final(x, POD, z)
-            dr.rectangle([bx2 + (x - CX + 7) * 14, by + 18 + (z - CZ + 7) * 14, bx2 + (x - CX + 8) * 14 - 1, by + 18 + (z - CZ + 8) * 14 - 1],
+            dr.rectangle([bx2 + (x - CX + 10) * 11, by + 18 + (z - CZ + 10) * 11, bx2 + (x - CX + 11) * 11 - 1, by + 18 + (z - CZ + 11) * 11 - 1],
                          fill=cc(b))
     img.save(path)
     print('превью', path)

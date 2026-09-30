@@ -58,13 +58,14 @@ REGISTRY = {
     'hill': [
         ('gen_hill_1.py', ['--outdir', '{T}', '--preview', ''],
          {'hill-1-ground.json': 'hill-1-ground.json', 'hill-1-tower.json': 'hill-1-tower.json'}),
+        ('gen_hill_1.py', ['--v2', '--outdir', '{T}', '--preview', ''], {'hill-1-fix-1.json': 'hill-1-fix-1.json'}),
     ],
 }
 
 ZERO = [r'опоры/вода/порядок[^:]*: ошибок (\d+)', r'опоры/вода/порядок: ошибок (\d+)', r'предупреждений (\d+)',
         r'перепад[^—]*— (\d+)', r'со стыком[^—]*— (\d+)', r'висящие[^:]*: (\d+)', r'без стоянки[^:]*: (\d+)',
         r'в резерве трасс ниже Y 60 — (\d+)', r'вода рельефа, открытая в воздух[^:]*: (\d+)', r'ИТОГО недостижимых точек: (\d+)',
-        r'скамейки[^:]*: ошибок (\d+)', r'вода, открытая в воздух[^:]*: (\d+)', r'предметы на стекле[^:]*: (\d+)']
+        r'скамейки[^:]*: ошибок (\d+)', r'у выходов с лестниц[^:]*: (\d+)', r'щели\): ошибок (\d+)', r'вода, открытая в воздух[^:]*: (\d+)', r'предметы на стекле[^:]*: (\d+)']
 
 
 def problems(out):
@@ -74,7 +75,7 @@ def problems(out):
         if 'НЕГАТИВ' in s:
             if s.endswith('False') or re.search(r'ошибок 0 \(ждём > 0\)', s): bad.append(s)
             continue
-        if ('проходимость' in s or 'маршрут' in s or 'текущий проект' in s) and s.endswith('False'): bad.append(s)
+        if ('проходимость' in s or 'маршрут' in s or 'текущий проект' in s or 'построенное + исправление' in s) and s.endswith('False'): bad.append(s)
         for rx in ZERO:
             m = re.search(rx, s)
             if m and int(m.group(1)) > 0: bad.append(s); break

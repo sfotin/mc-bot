@@ -201,6 +201,12 @@ NO_SUPPORT_NEEDED_EXACT = {
     'fence_gate',
 }
 
+# Сбоку (стремянка, табличка, факел на стене, кнопка, рычаг) держит только полный непрозрачный блок:
+# морской фонарь, светокамень, стекло, листва и т.п. - нет (hill-1-tower: стремянка на морских фонарях
+# колонны отвалилась на сервере, 2026-09-30).
+NOT_SIDE_SOLID = {'sea_lantern', 'glowstone', 'glass', 'stained_glass', 'leaves', 'leaves2', 'ice', 'beacon',
+                  'slime', 'iron_bars', 'barrier', 'cauldron', 'hopper', 'anvil'}
+
 BELOW_SUPPORT_NAMES = {
     'carpet', 'flower_pot', 'red_flower', 'yellow_flower', 'tallgrass', 'sapling', 'fire',
 }
@@ -446,6 +452,11 @@ def check_supports(schema, file_order, terrain):
                 errors.append(f'({x},{y},{z}) {name}: нужна вода в {skey}, а там {support_bare}')
             continue
 
+        if dy == 0 and (support_bare in NOT_SIDE_SOLID or support_bare.endswith(('_fence', '_pane', '_stairs', '_wall'))
+                        or support_bare in ('fence', 'stone_slab', 'wooden_slab', 'stone_slab2', 'purpur_slab')):
+            errors.append(f'({x},{y},{z}) {name}: опора сбоку {skey} ({support_bare}) не держит - нужен полный '
+                          f'непрозрачный блок (не морской фонарь, светокамень, стекло, листва, забор, плита)')
+            continue
         if support_bare in ('air', 'water', 'lava') or (
                 in_schema and is_attached_block(parse_block(schema[skey])[0])):
             errors.append(f'({x},{y},{z}) {name}: нет опоры в {skey} ({support_bare})')
