@@ -128,19 +128,23 @@ def road_leg(z):
 
 
 def stairs_levels():
-    """Скальная лестница: низ на плато (83) → марш 1 на юг вдоль скалы (6 ступеней) → площадка 89 → марш 2
-    на запад в расщелине (5) → площадка 94 → марш 3 на север (5) → вершина 99."""
+    """Скальная лестница: низ на плато (83, Z 1736) → марш 1 на юг вдоль скалы X −606…−605 (6 ступеней) →
+    площадка 89 → марш 2 на запад в расщелине Z 1743…1744 (5) → площадка 94 → марш 3 на север X −613…−612 (5)
+    → вершина 99 (Z 1737). Над маршем 2 — мостик вершины X −610…−607 (99.0), под ним просвет ≥ 4."""
     lv = {}
-    for x in (-605, -604): lv[(x, 1736)] = WIN
+    for x in (-606, -605): lv[(x, 1736)] = WIN
     for i, z in enumerate(range(1737, 1743)):                 # марш 1: Z 1737…1742 → 84…89
-        for x in (-605, -604): lv[(x, z)] = WIN + 1 + i
+        for x in (-606, -605): lv[(x, z)] = WIN + 1 + i
     for z in (1743, 1744):
-        for x in (-605, -604): lv[(x, z)] = 89.0               # площадка 1
-        for i, x in enumerate(range(-606, -611, -1)): lv[(x, z)] = 90.0 + i   # марш 2: X −606…−610 → 90…94
-        for x in (-611, -612): lv[(x, z)] = 94.0               # площадка 2
+        for x in (-606, -605): lv[(x, z)] = 89.0               # площадка 1
+        for i, x in enumerate(range(-607, -612, -1)): lv[(x, z)] = 90.0 + i   # марш 2: X −607…−611 → 90…94
+        for x in (-612, -613): lv[(x, z)] = 94.0               # площадка 2
     for i, z in enumerate(range(1742, 1737, -1)):              # марш 3: Z 1742…1738 → 95…99
-        for x in (-612, -611): lv[(x, z)] = 95.0 + i
+        for x in (-613, -612): lv[(x, z)] = 95.0 + i
     return lv, [6, 5, 5]
+
+
+BRIDGE = rc(-610, -607, 1743, 1744)               # мостик вершины над маршем 2 (ходим 99.0, по краям — стекло)
 
 
 def plan(T, hm):
@@ -152,7 +156,7 @@ def plan(T, hm):
                     {(x, z, h) for (x, z), h in hm['approach'].items()} | {(x, z, h) for (x, z), h in hm['exit'].items()}
     foot['proezd'] = rc(-609, -594, 1767, 1771) - tower
     foot['road'] = rc(-598, -594, 1736, 1766)
-    foot['plaza'] = (rc(-609, -593, 1761, 1773) | rc(-606, -593, 1774, 1774)) - tower - foot['proezd'] - foot['road']
+    foot['plaza'] = (rc(-609, -599, 1761, 1766) | rc(-609, -594, 1772, 1773) | rc(-606, -594, 1774, 1774)) - tower - {(-609, 1773)}   # X −593 — парапет края
     foot['loop'] = rc(-611, -599, 1749, 1760)
     foot['rink'] = rc(-616, -607, 1729, 1734)
     foot['wplaza'] = rc(-606, -594, 1729, 1735) - rc(-606, -606, 1729, 1734) | rc(-607, -606, 1735, 1735)
@@ -162,13 +166,13 @@ def plan(T, hm):
     foot['stairs'] = set(st)
     summit = {(x, z) for x in range(-622, -605) for z in range(1735, 1756) if T(x, z) >= 94} - foot['stairs']
     foot['summit'] = summit
-    foot['balcony'] = rc(-624, -622, 1748, 1751) - summit
+    foot['balcony'] = rc(-624, -621, 1744, 1748) - summit        # западнее вершины, в стороне от кроны у X −625
     for k in ('proezd', 'plaza', 'loop'): walk[k] = {(x, z, SAD) for x, z in foot[k]}
     walk['road'] = {(x, z, road_leg(z)) for x, z in foot['road']}
     for k in ('rink', 'wplaza'): walk[k] = {(x, z, WIN) for x, z in foot[k]}
     walk['lodge'] = {(x, z, WIN) for x, z in foot['lodge']}
     walk['stairs'] = {(x, z, h) for (x, z), h in st.items()}
-    walk['summit'] = {(x, z, TOP) for x, z in summit}
+    walk['summit'] = {(x, z, TOP) for x, z in summit} | {(x, z, TOP) for x, z in BRIDGE}
     walk['balcony'] = {(x, z, TOP) for x, z in foot['balcony']}
     # существующее: Горная дорога парка, Северная лестница холма E, Башенная площадь (как построено)
     foot['road_w'] = rc(-641, -625, 1769, 1773)
@@ -421,13 +425,15 @@ def draw(out, W, T, hm, foot, walk):
     # лестница
     for (x, z) in foot['stairs']: cell(x, z, NAMES['stairs'][2] + (255,))
     outline(foot['stairs'], (120, 90, 50), 1)
-    for (ax, az), (bx, bz) in (((-604.5, 1736.2), (-604.5, 1742.8)), ((-605.5, 1743.5), (-610.5, 1743.5)),
-                               ((-611, 1742.8), (-611, 1738))):
+    for (ax, az), (bx, bz) in (((-605.5, 1736.2), (-605.5, 1742.8)), ((-606.5, 1743.5), (-611.5, 1743.5)),
+                               ((-612, 1742.8), (-612, 1738))):
         dr.line([px(ax) + S // 2, pz(az) + S // 2, px(bx) + S // 2, pz(bz) + S // 2], fill=(160, 40, 30), width=2)
         dr.ellipse([px(bx) + S // 2 - 3, pz(bz) + S // 2 - 3, px(bx) + S // 2 + 3, pz(bz) + S // 2 + 3], fill=(160, 40, 30))
     # дорога: стрелка подъёма
     dr.line([px(-596) + S // 2, pz(1766), px(-596) + S // 2, pz(1735)], fill=(250, 220, 60), width=2)
     for (x, z) in foot['balcony']: cell(x, z, NAMES['balcony'][2] + (255,))
+    for (x, z) in BRIDGE: cell(x, z, (240, 235, 215, 255))
+    outline(BRIDGE, (30, 30, 30), 1)
     outline(foot['summit'] | foot['balcony'], (30, 30, 30), 2)
     outline(foot['helix'], (60, 50, 40), 2)
     for k in ('lodge', 'rink', 'wplaza', 'plaza', 'loop'): outline(foot[k], (40, 90, 160), 1)
@@ -459,8 +465,8 @@ def draw(out, W, T, hm, foot, walk):
     items = [k for k in NAMES]
     num = {}
     pos = {'helix': (-619, 1764), 'proezd': (-604, 1768), 'road': (-597, 1752), 'plaza': (-600, 1763), 'loop': (-606, 1754),
-           'wplaza': (-600, 1731), 'rink': (-613, 1731), 'lodge': (-602, 1740), 'stairs': (-609, 1742), 'summit': (-618, 1742),
-           'balcony': (-624, 1748)}
+           'wplaza': (-600, 1731), 'rink': (-613, 1731), 'lodge': (-602, 1740), 'stairs': (-610, 1739), 'summit': (-618, 1742),
+           'balcony': (-625, 1744)}
     for i, k in enumerate(items, 1):
         num[k] = i
         mx, mz = pos[k]
