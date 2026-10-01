@@ -52,6 +52,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--outdir', default=os.path.join(REPO, 'schemas'))
     p.add_argument('--preview', default=os.path.join(REPO, 'docs', 'districts', 'mount-2-preview.png'))
+    p.add_argument('--fix', action='store_true',
+                   help='исправление по замечанию владельца (узкий проход к трибуне) — schemas/mount-2-fix-1.json поверх построенного')
     return p.parse_args()
 
 
@@ -330,6 +332,7 @@ def main():
     args = parse_args()
     try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception: pass
+    if args.fix: return fix_main(args)
     names = [b[0] for b in BUILT]
     W = World(built_before(NAMES[0]), ext=True) if NAMES[0] in names else World(ext=True)
     W0 = World(built_before(M1[0]), ext=True)
@@ -496,6 +499,148 @@ def checks(W, W0, T0, D, TR, ST, keep, outs, args):
     negc = dict(ALL); negc[(i0[0], ICE + 1, i0[1])] = 'stonebrick'
     print('НЕГАТИВ: блок над льдом — найден:', len(track_issues(fin_of(negc))[2]) > 0)
     if args.preview: preview(args.preview, final, TR)
+
+
+# ---------------- исправление 1: проход с площади к лестнице и трибуне ----------------
+FORE = (-593, -588, 1761, 1766)                      # площадка у лестницы (79.0): срез склона, вместо прохода в 1 бл.
+ST3 = (-592, -591, -590)                             # лестница к старту — 3 бл. (было 2)
+
+
+def fix_geometry(F, W, T):
+    """Площадка у лестницы X −593…−588, Z 1761…1766 на 79.0 (снят старый парапет-стенка X −593 и срез склона),
+    по краям — подпорные стенки до грунта с еловым забором и фонарями; лестница — 3 бл. (X −592…−590), её
+    западная стенка — X −593. Возвращает ходовые клетки {(x, z): h}."""
+    H = {}
+    x0, x1, z0, z1 = FORE
+    for x in range(x0, x1 + 1):
+        for z in range(z0, z1 + 1):
+            flat_col(F, T, x, z, PR.SAD, 'quartz_block' if (x + 609) % 4 == 0 else 'sandstone:2', clear=4)
+            for y in range(int(PR.SAD) + 1, 90): F.put(x, y, z, 'air')           # старая стенка, забор, фонари
+            H[(x, z)] = PR.SAD
+    walls = [(x1 + 1, z) for z in range(z0 - 1, z1 + 2)] + [(x, z1 + 1) for x in range(x0 + 1, x1 + 1)] + [(x1, z0 - 1)]
+    lamps = []
+    for i, (x, z) in enumerate(walls):
+        g = max(T(x, z), W.surf(x, z) or 0)
+        g = min(g, 86)
+        for y in range(int(PR.SAD) - 1, g + 1): F.put(x, y, z, 'stonebrick')
+        if g >= int(PR.SAD) + 1: F.put(x, g + 1, z, 'spruce_fence')
+        else: F.put(x, g + 1, z, 'stone_slab:5')
+        if i % 4 == 2 and g >= int(PR.SAD) + 2: F.put(x, int(PR.SAD) + 1, z, 'sea_lantern'); lamps.append((x, z))
+    # лестница: X −592 — тоже ступени (старая западная стенка снимается), западная стенка — X −593
+    for xs, z, h in PR.STAIRS:
+        if z > 1760: continue
+        if h == PR.SAD or z in (1754, 1753): flat_col(F, T, -592, z, h, 'sandstone:2')
+        else: stair_col(F, T, -592, z, int(h), 'sandstone_stairs', 3)
+        for x in ST3: H[(x, z)] = h
+        n = (-593, z)
+        g = T(*n)
+        top = max(g, int(h))
+        for y in range(min(g + 1, int(h) - 1), top + 1): F.put(-593, y, z, 'stonebrick')
+        F.put(-593, top + 1, z, 'stone_slab:5')
+        for y in range(top + 2, max(F.plant_top(*n), W.surf(*n) or 0) + 1): F.put(-593, y, z, 'air')
+        if z in (1757, 1751): F.put(-593, int(h) + 1, z, 'sea_lantern'); lamps.append(n)
+    # колонна навеса на выходе лестницы (X −592, Z 1747) мешает третьей полосе — переносится на Z 1746
+    for y in range(ICE, ICE + 4): F.put(-592, y, PR.PAV[3], 'air')
+    for y in range(ICE, ICE + 4): F.put(-592, y, PR.PAV[3] - 1, 'quartz_block:2')
+    return H, lamps
+
+
+def fix_main(args):
+    W = World(ext=True)                                        # построено всё, включая mount-2-*
+    W0 = World(built_before(M1[0]), ext=True)
+    T0 = PR.Terr(W0)
+    F = Sch(W)
+    Hf, lamps = fix_geometry(F, W, T0)
+    nm = 'mount-2-fix-1.json'
+    o, rel, order, dims = save_schema(F.c, os.path.join(args.outdir, nm))
+    print(f'исправление 1: площадка у лестницы {len([c for c in Hf if c[1] > 1760])} кл. (79.0), лестница 3 бл., фонарей в стенках {len(lamps)}')
+    print(f'{nm}: origin {o[0]} {o[1]} {o[2]} | габарит {dims[0]} {dims[1]} {dims[2]} | записей {len(F.c)}')
+    print('== ПРОВЕРКИ ==')
+
+    def terr(x, y, z):
+        b = W.block(x + o[0], y + o[1], z + o[2])
+        return 'stone' if b == 'ground' else ('air' if b == 'plant' else b)
+    errs = dl.check_water(rel, terr)
+    se, wr = dl.check_supports(rel, order, terr)
+    print(f'{nm}: опоры/вода/порядок постройки (decor_lib, порядок бота): ошибок {len(errs) + len(se)} | предупреждений {len(wr)}')
+    for m in (errs + se + wr)[:6]: print('   ', m)
+
+    def fin_of(cells):
+        def f(x, y, z):
+            b = cells.get((x, y, z)) or W.block(x, y, z)
+            return 'air' if b == 'plant' else ('stone' if b == 'ground' else b)
+        return f
+    final, before = fin_of(F.c), fin_of({})
+    plaza = {(x, z) for x in range(-609, -593) for z in range(1761, 1775)}
+    net = {(x, z) for x in range(-610, -583) for z in range(1741, 1779)} | {(x, z) for x in range(-592, -584) for z in range(1736, 1741)}
+    box = ((-612, -582), (1734, 1779), (70, 100))
+
+    def walk(fin):
+        f2 = lambda x, y, z: fin(x, y, z) if (x, z) in net else ('stone' if y < 60 else 'air')
+        return dl.walk_reachable(f2, (-606, 79.0, 1777), *box)
+
+    def width(fin):
+        """Самое узкое место пути площадь → лестница → павильон: по каждому ряду Z 1748…1766 — сколько клеток
+        достижимо (в ряду площадки — от X −599 до −588, на лестнице — от X −593 до −589)."""
+        seen = walk(fin)
+        rows = {}
+        for z in range(1748, 1767):
+            xs = range(-593, -588) if z <= 1760 else range(-593, -587)
+            rows[z] = sum(1 for x in xs if any(sx == x and sz == z for (sx, sz, sh) in seen))
+        return min(rows.values()), rows
+    w_new, rows = width(final)
+    w_old, _ = width(before)
+    seen = walk(final)
+    tg = {'площадка у лестницы (−590,1764)': (-590, 79.0, 1764), 'середина лестницы (−592,1754)': (-592, 85.0, 1754),
+          'павильон (−588,1745)': (-588, 90.0, 1745), 'трибуна, верхний ряд (−600,1748)': (-600, 96.0, 1748),
+          'лёд у калитки (−589,1738)': (-589, 90.0, 1738)}
+    bad = 0
+    for k, (x, y, z) in tg.items():
+        ok = dl.reached(seen, x, y, z); bad += 0 if ok else 1
+        print(f'  маршрут → {k}: {ok}')
+    print('ИТОГО недостижимых точек:', bad)
+    print(f'ширина прохода площадь → лестница → павильон по рядам Z 1748…1766: мин. {w_new} бл. (норма ≥ 3); '
+          f'узких рядов (уже 3 бл.): {sum(1 for v in rows.values() if v < 3)}')
+    print(f'НЕГАТИВ: как построено (до исправления) — мин. {w_old} бл., узкое место найдено:', w_old < 3)
+    fl = floating_over_paving(final, F.c, {c: 79.0 for c in rect(*FORE)})
+    print('висящие над мощением (под предметом воздух или нижний полублок):', len(fl), fl[:3])
+    drops = []
+    for (x, z) in rect(*FORE):
+        for a, b in N4:
+            n = (x + a, z + b)
+            if n in rect(*FORE) or n in plaza: continue
+            if final(n[0], 79, n[1]) == 'air' and final(n[0], 78, n[1]) == 'air': drops.append(n)
+    print('обрыв ≥ 2 у края площадки без ограждения —', len(drops), drops[:3])
+    if args.preview:
+        pv = args.preview.replace('mount-2-preview', 'mount-2-fix-1-preview')
+        fix_preview(pv, final, before)
+
+
+def fix_preview(path, final, before):
+    from PIL import Image, ImageDraw, ImageFont
+    fp = next((f for f in ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'C:/Windows/Fonts/arial.ttf') if os.path.exists(f)), None)
+    F = lambda n: ImageFont.truetype(fp, n) if fp else ImageFont.load_default()
+    C = dict(CL); C.update({'sandstone:2': (225, 212, 160), 'sandstone_stairs': (210, 195, 140), 'quartz_block': (240, 238, 232),
+                            'stonebrick': (125, 125, 125), 'stone_slab:5': (140, 140, 140), 'spruce_fence': (100, 70, 40),
+                            'sea_lantern': (200, 235, 235), 'grass': (95, 150, 60), 'quartz_block:2': (245, 243, 236)})
+    cc = lambda b: C.get(b) or C.get(b.split(':')[0]) or col(b)
+    X0, X1, Z0, Z1 = -606, -583, 1740, 1772
+    S = 14
+    img = Image.new('RGB', (2 * (X1 - X0 + 1) * S + 60, (Z1 - Z0 + 1) * S + 50), 'white')
+    dr = ImageDraw.Draw(img)
+    for k, (fin, t) in enumerate(((before, 'как построено: проход 1 бл.'), (final, 'после исправления: площадка и лестница 3 бл.'))):
+        ox = 20 + k * ((X1 - X0 + 1) * S + 30)
+        dr.text((ox, 4), t, fill='black', font=F(13))
+        for x in range(X0, X1 + 1):
+            for z in range(Z0, Z1 + 1):
+                y = 100
+                while y > 60 and fin(x, y, z) == 'air': y -= 1
+                b = fin(x, y, z)
+                c = (150, 140, 110) if b == 'stone' else cc(b)
+                dr.rectangle([ox + (x - X0) * S, 30 + (z - Z0) * S, ox + (x - X0 + 1) * S - 1, 30 + (z - Z0 + 1) * S - 1], fill=c)
+                dr.text((ox + (x - X0) * S + 1, 30 + (z - Z0) * S + 1), str(y % 100), fill=(60, 60, 60), font=F(7))
+    img.save(path)
+    print('превью', path, img.size)
 
 
 def preview(path, final, TR):
