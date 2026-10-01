@@ -546,7 +546,8 @@ def fix_geometry(F, W, T):
 
 
 def fix_main(args):
-    W = World(ext=True)                                        # построено всё, включая mount-2-*
+    names = [b[0] for b in BUILT]                              # построено всё, включая mount-2-*; сама правка — после
+    W = World(built_before('mount-2-fix-1.json'), ext=True) if 'mount-2-fix-1.json' in names else World(ext=True)
     W0 = World(built_before(M1[0]), ext=True)
     T0 = PR.Terr(W0)
     F = Sch(W)
