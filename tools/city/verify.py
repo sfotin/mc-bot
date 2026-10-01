@@ -69,7 +69,8 @@ REGISTRY = {
     ],
     'dome': [
         ('gen_dome_1.py', ['--outdir', '{T}', '--preview', ''],
-         {'dome-1-ground.json': 'dome-1-ground.json', 'dome-1-build.json': 'dome-1-build.json', 'dome-1-metro.json': 'dome-1-metro.json'}),
+         {'dome-1-ground.json': 'dome-1-ground.json', 'dome-1-dry.json': 'dome-1-dry.json', 'dome-1-build.json': 'dome-1-build.json',
+          'dome-1-metro.json': 'dome-1-metro.json'}),
     ],
 }
 

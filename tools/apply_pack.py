@@ -7,10 +7,12 @@
     python tools/apply_pack.py --clean    — сначала откатить незакоммиченные изменения
                                             отслеживаемых файлов и остатки прошлой попытки
     --no-push                             — без push (проверка)
+    python tools/apply_pack.py --tidy     — только уборка корня (без пакета): удалить неотслеживаемые
+                                            копии файлов, уже лежащих в git в подпапках (превью, .cmd …)
 
 Шаги: найти архив (в т.ч. «… (1).zip» от браузера) → распаковать в .pack (удалив старую) →
 проверить BASE = HEAD и чистое дерево → скопировать files/ → tools/city/verify.py →
-git add (явный список) → commit (COMMIT_MSG) → push → удалить .pack и архив.
+git add (явный список) → commit (COMMIT_MSG) → push → удалить .pack и архив → уборка корня.
 При ошибке — «СТОП: …» и откат; ничего не коммитится.
 """
 import glob
@@ -43,11 +45,33 @@ def git(*args, check=True):
     return r.stdout.strip()
 
 
+def tidy():
+    """Убирает из корня репозитория неотслеживаемые копии файлов, которые уже лежат в git в подпапках
+    (превью *.png, builds/*.cmd, генераторы, схемы, скачанные из чата в корень). Остальное не трогает — только называет."""
+    tracked = git('ls-files').splitlines()
+    names = {}
+    for f in tracked:
+        if '/' in f: names.setdefault(os.path.basename(f), f)
+    top = {f for f in tracked if '/' not in f}
+    gone, other = [], []
+    for f in sorted(os.listdir(ROOT)):
+        pth = os.path.join(ROOT, f)
+        if not os.path.isfile(pth) or f in top or f.startswith('.') or f.startswith('mc-bot-pack-'): continue
+        if f in names:
+            try: os.remove(pth); gone.append(f'{f} (есть {names[f]})')
+            except OSError: pass
+        elif not f.endswith(('.mca', '.log')): other.append(f)
+    say(f'Уборка корня: убрано копий {len(gone)}' + (': ' + ', '.join(gone) if gone else ''))
+    if other: say('В корне остались неотслеживаемые файлы (не копии, не трогаю): ' + ', '.join(other))
+
+
 def main():
     try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception: pass
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     clean, push = '--clean' in sys.argv, '--no-push' not in sys.argv
+    if '--tidy' in sys.argv and not args and not glob.glob(os.path.join(ROOT, 'mc-bot-pack-*.zip')):
+        tidy(); return
     if args:
         zp = os.path.abspath(args[0])
     else:
@@ -106,6 +130,7 @@ def main():
     shutil.rmtree(PACK, ignore_errors=True)
     try: os.remove(zp)
     except OSError: pass
+    tidy()
 
 
 if __name__ == '__main__':

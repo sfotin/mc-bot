@@ -30,7 +30,7 @@ HUB = (-752, -744, 1942, 1950)
 HUB_FY, HUB_TOP = 52, 57
 # --- павильон на острове и галерея-лестница ---------------------------------------------------------
 PAV = (-759, -753, 1903, 1909)          # ноги 64
-ISLE_PATH = [(x, z) for x in range(-767, -759) for z in range(1904, 1907)]   # от моста (Z 1901, верх 64)
+ISLE_PATH = [(x, z) for x in range(-767, -759) for z in range(1904, 1912)]   # площадка от моста (Z 1901, верх 64), расширена к югу
 GAL_X = (-757, -755)                     # внутренность галереи по оси павильона, стенки X −758 и −754
 
 
@@ -46,9 +46,15 @@ def gallery_profile():
 
 
 def gallery_ceiling(gal):
-    """Низ свода галереи по Z: над ступенью — по верхней из соседних (проём начинается над первой ступенью)."""
-    if CEIL_MODE == 'naive': return {z: gal[z] + 3 for z in gal}
-    return {z: max(gal.get(z - 1, gal[z]), gal[z], gal.get(z + 1, gal[z])) + 3 for z in gal}
+    """Низ свода галереи по Z: над верхней из соседних ступеней + 4 (потолок следующего марша не перед лицом)."""
+    st = gallery_stand(gal)
+    if CEIL_MODE == 'naive': return {z: st[z] + 3 for z in gal}
+    return {z: max(st.get(z - 1, st[z]), st[z], st.get(z + 1, st[z])) + 4 for z in gal}   # просвет 4 (решение владельца)
+
+
+def gallery_stand(gal):
+    """Z → высота, на которой стоит человек: на ступени — блок ступени + 1, на площадке — ноги."""
+    return {z: gal[z] + 1 if (z - 1 in gal and gal[z] < gal[z - 1]) else gal[z] for z in gal}
 
 
 # --- метро: станция «Набережная», рампа, труба по дну -------------------------------------------------
@@ -188,9 +194,10 @@ def checks(W, verbose=True):
     say(f'ширина галереи: {wmin} бл.')
     if wmin < 3: errs.append('галерея уже 3 бл.')
     ceil = gallery_ceiling(gal)
-    head = min(min(ceil[a], ceil[b]) - max(gal[a], gal[b]) for a, b in zip(sorted(gal), sorted(gal)[1:]))
+    st_ = gallery_stand(gal)
+    head = min(min(ceil[a], ceil[b]) - max(st_[a], st_[b]) for a, b in zip(sorted(gal), sorted(gal)[1:]))
     say(f'просвет над ступенями галереи (на переходе между ступенями): {head} бл.')
-    if head < 3: errs.append(f'просвет над лестницей галереи {head} < 3')
+    if head < 4: errs.append(f'просвет над лестницей галереи {head} < 4')
     # платформа «Набережная» ← променад
     pf = {(x, z): ST_FEET for x in range(ST_N[0], ST_N[1] - 1) for z in range(ST_N[2], ST_N[3] + 1)}
     sst = set()

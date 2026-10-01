@@ -34,7 +34,8 @@ from city_lib import World, REPO, BUILT, built_before, save_schema, dl, col  # n
 from gen_park_1 import h32, bench  # noqa: E402
 import plan_dome_v1 as PD  # noqa: E402
 
-NAMES = ['dome-1-ground.json', 'dome-1-build.json', 'dome-1-metro.json']
+NAMES = ['dome-1-ground.json', 'dome-1-dry.json', 'dome-1-build.json', 'dome-1-metro.json']
+FILL = 'sponge'                                       # заполнитель внутренностей (схема dry): губка забирает воду
 SEA = PD.SEA
 GLASS, TINT, LINE = 'glass', 'stained_glass:3', 'stonebrick'
 RIB, QZ, PILLAR = 'concrete:0', 'quartz_block', 'quartz_block:2'
@@ -74,7 +75,7 @@ class Plan:
 
     def __init__(self, W):
         self.W = W
-        self.G, self.B, self.M = {}, {}, {}
+        self.G, self.D, self.B, self.M = {}, {}, {}, {}
         self.INT = {}                 # внутренность (воздух в итоге) -> 'B' | 'M'
         self.BODY = set()             # клетки ступеней/рельсов в объёме (тоже за «стенкой»)
         self.OPEN = set()             # соседи внутренности, которые не заделывать (проёмы на воздух)
@@ -237,19 +238,19 @@ def build_gallery(P):
             P.B[(x, 63, z)] = QZ
             ex, ez = x in (x0, x1), z in (z0, z1)
             door = (x == x0 and z0 + 2 <= z <= z0 + 4) or (z == z1 and GX[0] <= x <= GX[1])
-            for y in range(64, 67):
+            for y in range(64, 68):
                 if door or not (ex or ez): P.B[(x, y, z)] = 'air'
                 else: P.B[(x, y, z)] = PILLAR if (ex and ez) else TINT
-            P.B[(x, 67, z)] = QZ if (ex or ez) else TINT
-            for y in range(68, max(g, 67) + 3):
+            P.B[(x, 68, z)] = QZ if (ex or ez) else TINT
+            for y in range(69, max(g, 68) + 3):
                 if P.W.block(x, y, z) != 'air': P.B[(x, y, z)] = 'air'
             if not (ex or ez) or door: P.feet[(x, z)] = 64
     for z in range(z0 + 2, z0 + 5):
-        for y in range(64, 67): P.OPEN.add((x0 - 1, y, z))
-    P.B[(x0 + 3, 67, z0 + 3)] = LAMP
+        for y in range(64, 68): P.OPEN.add((x0 - 1, y, z))
+    P.lamp_c['павильон'] = [(x, 68, z) for x in range(x0 + 1, x1) for z in range(z0 + 1, z1)]
     P.targets['павильон'] = [(x, 64, z) for x in range(x0 + 1, x1) for z in range(z0 + 1, z1)]
     for x in range(GX[0], GX[1] + 1):                  # стык павильон → галерея: внутренность галереи начинается Z 1910
-        for y in range(64, 67): P.OPEN.add((x, y, z1))
+        for y in range(64, 68): P.OPEN.add((x, y, z1))
     # дорожка от моста (Z 1902–1903, ноги 64) к западной двери павильона
     path = PD.ISLE_PATH
     for (x, z) in path:
@@ -267,8 +268,12 @@ def build_gallery(P):
             if P.W.block(n[0], 63, n[1]) != 'ground' and (n[0], 63, n[1]) not in P.W.pre: continue
             for y in range(64, P.W.ground(*n) + 1):
                 if (n[0], y, n[1]) not in P.W.pre: P.B[(n[0], y, n[1])] = LINE
-    P.targets['дорожка'] = [(x, 64, z) for (x, z) in path]
-    P.lamp_c['дорожка'] = [(x, 63, 1905) for x in range(-767, -759)]          # фонари вровень с мощением, по оси
+    # скамейка у южного края площадки лицом к морю (спинкой к павильону — нет: лицом на юг)
+    bc = bench(P.B, -765, 64, 1910, 's')
+    P.isle_bench = {(x, z) for (x, z) in bc}
+    P.bench_fronts_isle = [(-764, 64.0, 1911)]
+    P.targets['дорожка'] = [(x, 64, z) for (x, z) in path if (x, z) not in P.isle_bench]
+    P.lamp_c['дорожка'] = [(x, 63, z) for (x, z) in path if (x, z) not in P.isle_bench]   # фонари вровень с мощением
 
 
 # ----------------------------------------------------------------------------- метро
@@ -390,8 +395,8 @@ def seal(P):
     for c, b in P.CUT.items():
         if c not in P.G and c not in body: P.G[c] = b
     temp = 0
-    for c in body:
-        if is_water(W.block(*c)) and c not in P.G: P.G[c] = 'stone'; temp += 1
+    for c in body:                                    # губки во ВСЕ внутренности (вода могла натечь и в тоннели в породе)
+        if c not in P.G: P.D[c] = FILL; temp += 1
     # внутренность: воздух в своей схеме
     for c, o in P.INT.items():
         D = P.B if o == 'B' else P.M
@@ -418,7 +423,7 @@ def cover(targets, cands, R=7):
 
 def lights(P):
     out = {}
-    plan = [('дорожка', P.B), ('купол', P.B), ('станция «Купол»', P.G), ('галерея', None), ('зал «Набережная»', P.M), ('метро', P.G),
+    plan = [('павильон', P.B), ('дорожка', P.B), ('купол', P.B), ('станция «Купол»', P.G), ('галерея', None), ('зал «Набережная»', P.M), ('метро', P.G),
             ('лестница «Набережной»', P.M)]
     for grp, D in plan:
         tg = P.targets[grp]
@@ -468,10 +473,10 @@ def main():
     W = World(built_before(NAMES[0]), ext=True) if NAMES[0] in names else World(ext=True)
     P, added, temp, lt, fl = compose(W)
     print(f'купол: оболочка {len(P.dome_shell)} кл., внутри {len(P.dome_inner)} | галерея: ступеней {len(P.gal_steps)} рядов | '
-          f'путь {len(P.track)} бл. | заделка: {added} | времянка из камня (там, где вода) {temp} | цветов {fl}')
+          f'путь {len(P.track)} бл. | заделка: {added} | губки во внутренностях (схема dry) {temp} | цветов {fl}')
     print('свет (фонарей поставлено / клеток без покрытия):', {k: v for k, v in lt.items()})
     outs = {}
-    for nm, D in zip(NAMES, (P.G, P.B, P.M)):
+    for nm, D in zip(NAMES, (P.G, P.D, P.B, P.M)):
         o, rel, order, dims = save_schema(dict(D), os.path.join(a.outdir, nm))
         outs[nm] = (o, rel, order)
         print(f'{nm}: origin {o[0]} {o[1]} {o[2]} | габарит {dims[0]} {dims[1]} {dims[2]} | записей {len(D)}')
@@ -481,8 +486,8 @@ def main():
 # =========================================================================================================
 def checks(W, P, outs, a):
     print('== ПРОВЕРКИ ==')
-    prevs = {NAMES[0]: {}, NAMES[1]: dict(P.G), NAMES[2]: {**P.G, **P.B}}
-    for nm, D in zip(NAMES, (P.G, P.B, P.M)):
+    prevs = {NAMES[0]: {}, NAMES[1]: dict(P.G), NAMES[2]: {**P.G, **P.D}, NAMES[3]: {**P.G, **P.D, **P.B}}
+    for nm, D in zip(NAMES, (P.G, P.D, P.B, P.M)):
         o, rel, order = outs[nm]
         prev = prevs[nm]
 
@@ -496,7 +501,7 @@ def checks(W, P, outs, a):
         for m in (errs + se + wr)[:6]: print('   ', m)
         be = dl.check_bench_front(rel, terr)
         print(f'{nm}: скамейки (место для ног): ошибок {len(be)}', be[:3])
-    ALL = {**P.G, **P.B, **P.M}
+    ALL = {**P.G, **P.D, **P.B, **P.M}
 
     def fin_of(cells):
         def f(x, y, z):
@@ -504,7 +509,7 @@ def checks(W, P, outs, a):
             return 'air' if b == 'plant' else ('stone' if b == 'ground' else b)
         return f
     final = fin_of(ALL)
-    after_g = fin_of(P.G)
+    after_g = fin_of({**P.G, **P.D})
     # протечки
     body = set(P.INT) | P.BODY
 
@@ -519,7 +524,7 @@ def checks(W, P, outs, a):
                     if is_water(fin(*n)): out.append((c, n))
         return out
     wet = [c for c in body if is_water(after_g(*c))]
-    print('протечки после dome-1-ground (вода внутри объёмов):', len(wet), wet[:3])
+    print('протечки после dome-1-dry (вода внутри объёмов):', len(wet), wet[:3])
     lk = leaks(final)
     print('протечки в итоге (воздух внутри рядом с водой):', len(lk), lk[:3])
     # задетое построенное
@@ -533,7 +538,7 @@ def checks(W, P, outs, a):
     seen = walk(final, (-766, 64.0, 1903), box1)
     tg = {'павильон (−756,1906)': (-756, 64.0, 1906), 'низ галереи (−756,1932)': (-756, 53.0, 1932),
           'купол, центр': (CX, 53.0, CZ), 'перед скамейкой N': P.bench_fronts[0], 'перед скамейкой S': P.bench_fronts[1],
-          'перед скамейкой W': P.bench_fronts[2]}
+          'перед скамейкой W': P.bench_fronts[2], 'перед скамейкой на острове': P.bench_fronts_isle[0]}
     bad = 0
     for k, t in tg.items():
         ok = dl.reached(seen, *t); bad += 0 if ok else 1
@@ -621,7 +626,7 @@ def preview(path, final, W, P):
             ('Разрез по X −700 (метро у набережной), Z 1846…1885', [(-700, z) for z in range(1846, 1886)], (40, 68))]
     sh = sum((y1 - y0 + 1) * S2 + 30 for _, _, (y0, y1) in secs)
     img = Image.new('RGB', (max(mw + 50, 52 * S2 + 60), mh + 40 + sh + 20), (250, 250, 247)); dr = ImageDraw.Draw(img)
-    ALL = {**P.G, **P.B, **P.M}
+    ALL = {**P.G, **P.D, **P.B, **P.M}
     tops = {}
     for (x, y, z), b in ALL.items():
         if b in ('air',) or is_water(b): continue

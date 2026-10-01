@@ -1,7 +1,5 @@
 @echo off
-rem Underwater dome stage 1: dry box (shells, stone fill), interiors and garden, metro. Strictly in this order.
-cd /d "%~dp0\.."
-node index-cmd.js dome-1-ground.json -783 36 1849
-node index-cmd.js dome-1-build.json -782 52 1903
-node index-cmd.js dome-1-metro.json -751 52 1850
+rem Underwater dome stage 1 is now built in 4 separate steps, each only after the previous one ends with 0 errors:
+rem builds\build-dome-1-1-ground.cmd, build-dome-1-2-dry.cmd, build-dome-1-3-build.cmd, build-dome-1-4-metro.cmd
+echo Use builds\build-dome-1-1-ground.cmd ... build-dome-1-4-metro.cmd one by one (see CITY.md 7.8).
 pause
