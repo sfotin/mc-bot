@@ -97,11 +97,12 @@ class World:
         self._W, self._X0, self._Z0 = d['w'], d['x0'], d['z0']
         self._cv = json.load(open(os.path.join(repo, 'docs', 'terrain', 'caves.json')))
         # вне участка — съёмка окрестностей горы F (docs/terrain/mount.json, снята 2026-09-30 с построенным;
-        # только для колонн вне участка site.json, где ничего не построено). Включается ext=True: генераторы,
+        # только для колонн вне участка site.json, где ничего не построено) и к югу от участка — бухта у купола
+        # (docs/terrain/dome.json, X −800…−673, Z 1936…1999, снята 2026-10-01). Включается ext=True: генераторы,
         # написанные раньше, читали колонны за краем участка «как есть» (индекс уходил в соседнюю строку) —
         # без ext их поведение не меняется и построенные схемы воспроизводятся.
         self._ext = []
-        for tf, cf in (('mount.json', 'mount-caves.json'),):
+        for tf, cf in (('mount.json', 'mount-caves.json'), ('dome.json', 'dome-caves.json')):
             tp = os.path.join(repo, 'docs', 'terrain', tf)
             if ext and os.path.exists(tp):
                 self._ext.append((json.load(open(tp)), json.load(open(os.path.join(repo, 'docs', 'terrain', cf)))))
