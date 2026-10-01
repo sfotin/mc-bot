@@ -18,7 +18,7 @@
 Механизмы IC2/AE2 ставит владелец; модовых блоков в схемах нет.
 
 Запуск: gen_industry_1.py [--outdir schemas] [--preview docs/districts/industry-1-preview.png]
-Мир — World() (участок) + съёмка промзоны docs/terrain/industry-voids.json (пустоты под площадкой и
+Мир — World(built_before('industry-1-ground.json')) (участок) + съёмка промзоны docs/terrain/industry-voids.json (пустоты под площадкой и
 рельеф к востоку и югу от участка). После постройки — built_before('industry-1-ground.json').
 Проверки: опоры/вода/порядок (decor_lib, порядок бота) для каждой схемы; проходимость без прыжков
 (от тротуара проспекта и от улицы набережной — к каждой двери, в каждый зал и щитовую, в градирни);
@@ -567,7 +567,7 @@ def place_lamps(P, D, cands, targets, existing):
 # =========================================================================================================
 def main():
     a = parse_args()
-    W = World()
+    W = World(built_before(NAMES[0]))
     P = Plan(W)
     build_ground(P)
     build_npp(P)

@@ -75,6 +75,8 @@ REGISTRY = {
     'industry': [
         ('gen_industry_1.py', ['--outdir', '{T}', '--preview', ''],
          {n: n for n in ('industry-1-ground.json', 'industry-1-npp.json', 'industry-1-halls.json')}),
+        ('gen_industry_2.py', ['--outdir', '{T}', '--preview', ''],
+         {n: n for n in ('industry-2-ground.json', 'industry-2-build.json', 'industry-2-green.json')}),
     ],
 }
 
