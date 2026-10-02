@@ -105,8 +105,9 @@ def build_common(P):
     P.stops1 = []
     for w in ('N', 'S'):
         for (x, z, f, k) in PM.line1_track(w):
-            if hx0 <= x <= hx1 and k in ('stop', 'low', 'boost_up'):
-                P.shell(x, f - 1, z); P.A.add((x, f, z))
+            if hx0 <= x <= hx1 and k in ('stop', 'stop2', 'low', 'boost_up'):
+                P.shell(x, f - 1, z)
+                for y in range(f, F1): P.A.add((x, y, z)); P.S.pop((x, y, z), None)
                 if k == 'stop': P.stops1.append((x, f, z, w))
     # марш остров → мезонин: подъём на запад, X −677 (ноги 56) … −680 (ноги 59), Z 1812…1814; стенка Z 1811,
     # ограждение Z 1815 (стекло-панели), свод зала над маршем снят
@@ -306,8 +307,9 @@ def build_line2(P):
     P.stops2 = []
     for w in ('W', 'E'):
         for (x, z, ff, k) in PM.line2_track(w):
-            if k in ('stop', 'low', 'boost_up'):
-                P.shell(x, ff - 1, z); P.A.add((x, ff, z)); P.S.pop((x, ff, z), None)
+            if k in ('stop', 'stop2', 'low', 'boost_up'):
+                P.shell(x, ff - 1, z)
+                for y in range(ff, l2_feet(z)): P.A.add((x, y, z)); P.S.pop((x, y, z), None)
                 if k == 'stop': P.stops2.append((x, ff, z, w))
 
 
@@ -376,7 +378,7 @@ def circuit_rails(cells, flat_every=8):
     R, RED = {}, set()
     near_stop = set()
     for i, c in enumerate(cells):
-        if c[3] in ('stop', 'low', 'boost_up'):
+        if c[3] in ('stop', 'stop2', 'low', 'boost_up'):
             for d in range(-3, 4): near_stop.add((i + d) % n)
     run = 0
     for i, (x, z, f, k) in enumerate(cells):
@@ -390,7 +392,7 @@ def circuit_rails(cells, flat_every=8):
         elif up: meta = SLOPE[up]
         else: meta = 1 if dp in 'EW' else 0
         gold, red = False, False
-        if k == 'stop': gold = True
+        if k in ('stop', 'stop2'): gold = True
         elif k == 'boost_up' or (straight and up == dq): gold, red = True, True
         elif straight and not up and k != 'low' and i not in near_stop:
             run += 1
@@ -514,21 +516,23 @@ def rail_issues(final, R, RED, ring, buttons):
         if not solid_ok(final(x, y - 1, z)): out.append(('нет опоры', (x, y, z)))
         if b.startswith('golden'):
             k = next(c[3] for c in ring if (c[0], c[2], c[1]) == (x, y, z))
-            if k != 'stop' and final(x, y - 1, z) != 'redstone_block': out.append(('без питания', (x, y, z)))
+            if k not in ('stop', 'stop2') and final(x, y - 1, z) != 'redstone_block': out.append(('без питания', (x, y, z)))
     for i, c in enumerate(ring):
         if c[3] != 'stop': continue
         x, z, f = c[0], c[1], c[2]
-        for j in (i - 1, (i + 1) % len(ring)):
+        grp = [c] + ([ring[(i + 1) % len(ring)]] if ring[(i + 1) % len(ring)][3] == 'stop2' else [])
+        for j in (i - 1, (i + len(grp)) % len(ring)):
             p = ring[j]
             if final(p[0], p[2], p[1]).startswith('golden'): out.append(('ускоряющий рядом со стоянкой — питание цепью', (x, f, z)))
-        for a, b, cc in N6:
-            if final(x + a, f + b, z + cc) == 'redstone_block': out.append(('редстоун у стоянки', (x, f, z)))
+        for g in grp:
+            for a, b, cc in N6:
+                if final(g[0] + a, g[2] + b, g[1] + cc) == 'redstone_block': out.append(('редстоун у стоянки', (g[0], g[2], g[1])))
         if not any(abs(bx - x) + abs(bz - z) == 1 and by == f + 1 for bx, by, bz in buttons): out.append(('нет кнопки', (x, f, z)))
     for bx, by, bz in buttons:
         if not solid_ok(final(bx, by - 1, bz)) or final(bx, by - 1, bz) == 'redstone_block': out.append(('кнопка не на сплошном блоке', (bx, by, bz)))
         for a, b, cc in N6:
             n = (bx + a, by - 1 + b, bz + cc)
-            if final(*n).startswith('golden') and n not in [(c[0], c[2], c[1]) for c in ring if c[3] == 'stop']:
+            if final(*n).startswith('golden') and n not in [(c[0], c[2], c[1]) for c in ring if c[3] in ('stop', 'stop2')]:
                 out.append(('кнопка питает не стоянку', n))
     return out
 

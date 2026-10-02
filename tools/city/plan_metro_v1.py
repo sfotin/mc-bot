@@ -133,12 +133,14 @@ def lerp_profile(prof, z):
     raise ValueError(z)
 
 
-def _stop(cells, i_stop):
-    """«Впадина» остановки — три клетки на блок ниже: спуск (стоянка, ускоряющий без питания, питание — кнопкой),
-    низ (обычный рельс: разрывает цепь ускоряющих, иначе стоянка получит питание от подъёма), подъём
-    (ускоряющий на блоке редстоуна)."""
-    for k, kind in zip((i_stop, i_stop + 1, i_stop + 2), ('stop', 'low', 'boost_up')):
-        x, z, f, _ = cells[k]; cells[k] = (x, z, f - 1, kind)
+def _stop(cells, i_stop, depth=2):
+    """«Впадина» остановки — пять клеток: два спуска (стоянка — ускоряющие без питания; кнопка питает первый, второй —
+    по цепи), низ (обычный рельс: разрывает цепь, иначе стоянка получит питание от подъёма), два подъёма (ускоряющие на
+    блоках редстоуна). Глубина 2: с одним спуском вагонетка на полной скорости иногда проскакивала (стенд 2026-10-02)."""
+    seq = (('stop', 1), ('stop2', 2), ('low', 2), ('boost_up', 2), ('boost_up', 1)) if depth == 2 else \
+        (('stop', 1), ('low', 1), ('boost_up', 1))          # глубина 1 — первая редакция стенда (metro-0-test)
+    for k, (kind, d) in zip(range(i_stop, i_stop + len(seq)), seq):
+        x, z, f, _ = cells[k]; cells[k] = (x, z, f - d, kind)
 
 
 def line1_track(which, stations=STATIONS_1, f0=L1F):
@@ -168,9 +170,9 @@ def line1_track(which, stations=STATIONS_1, f0=L1F):
     for s in stations:
         if s['kind'] == 'term' and s['side'] != which: continue
         if which == 'N':          # на запад: стоянка у западного конца платформы
-            i = next(k for k, c in enumerate(cells) if c[0] == s['x0'] + 2 and c[3] == 'rail')
+            i = next(k for k, c in enumerate(cells) if c[0] == s['x0'] + 4 and c[3] == 'rail')
         else:
-            i = next(k for k, c in enumerate(cells) if c[0] == s['x1'] - 2 and c[3] == 'rail')
+            i = next(k for k, c in enumerate(cells) if c[0] == s['x1'] - 4 and c[3] == 'rail')
         _stop(cells, i)
     return cells
 
@@ -201,8 +203,8 @@ def line2_track(which, prof=L2_PROFILE, stations=STATIONS_2):
     else: cells += [(x, L2_Z[0], prof[0][1], k) for x, k in loop[::-1]]
     for s in stations:
         if s['kind'] == 'term' and s['side'] != which: continue
-        if which == 'W': i = next(k for k, c in enumerate(cells) if c[1] == s['z1'] - 2 and c[3] == 'rail')
-        else: i = next(k for k, c in enumerate(cells) if c[1] == s['z0'] + 2 and c[3] == 'rail')
+        if which == 'W': i = next(k for k, c in enumerate(cells) if c[1] == s['z1'] - 4 and c[3] == 'rail')
+        else: i = next(k for k, c in enumerate(cells) if c[1] == s['z0'] + 4 and c[3] == 'rail')
         _stop(cells, i)
     return cells
 
@@ -232,7 +234,7 @@ def boxes(cfg):
     for a, b in runs: B.append((a, b, 1812, 1816, L1F - 1, L1F + 3, 'тоннель линии 1'))
     for w in ('N', 'S'):                                   # «впадины» остановок: пол на блок ниже
         for x, z, f, k in line1_track(w, cfg['st1']):
-            if k in ('stop', 'low', 'boost_up'): B.append((x, x, z, z, f - 1, f - 1, 'впадина остановки линии 1'))
+            if k in ('stop', 'stop2', 'low', 'boost_up'): B.append((x, x, z, z, f - 1, f - 1, 'впадина остановки линии 1'))
     # коллектор
     px0, px1 = cfg['pond']
     for a, b, z0, z1 in ((cfg['col_x'][0], px0 - 1, *COL_Z), (px0, px1, *COL_Z_POND), (px1 + 1, cfg['col_x'][1], *COL_Z)):
@@ -500,7 +502,7 @@ def draw(W, out, tracks, B, vc):
         return (min(r[0] for r in rg), max(r[1] for r in rg)) if rg else None
     t1 = tracks['линия 1 S']
     xs = sorted({c[0] for c in t1})
-    fmap = {c[0]: c[2] for c in t1 if c[3] in ('rail', 'stop', 'low', 'boost_up', 'curve')}
+    fmap = {c[0]: c[2] for c in t1 if c[3] in ('rail', 'stop', 'stop2', 'low', 'boost_up', 'curve')}
     p1 = [[(fmap.get(x, L1F), fmap.get(x, L1F) + 2, (60, 110, 220)), (COL_FLOOR + 1, COL_TOP, (240, 160, 40))] for x in xs]
     profile(y0s + SEC_H - 30, 'Профиль линии 1 по Z 1815 (X −794…−594, ×3): рельеф по оси, природные пустоты (съёмка), путь, коллектор',
             p1, [W.surf(x, 1815, ymax=75) or 60 for x in xs], [vv(x, 1815) for x in xs])
