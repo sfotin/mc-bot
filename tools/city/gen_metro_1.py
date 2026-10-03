@@ -13,8 +13,8 @@
   docs/terrain/metro-voids.json), открытые в постройку, заделываются;
 - metro-1-rails.json — путь линии 2 (кольцо: на юг по X −693, петля у «Набережной», на север по X −691, петля у
   «Вокзала»): рельсы, ускоряющие на блоках редстоуна (подъёмы по ходу — все, по ровному — через 24), остановки
-  «впадиной» глубиной 3 (спуски — ускоряющие без питания, низ — обычный, подъёмы — ускоряющие на редстоуне), кнопки на верху
-  блока платформы у спуска. Строить после проверки стенда metro-0-test (gen_metro_0.py).
+  «на гребне» (подъём на 1, гребень, два спуска — ускоряющие без питания, низ на блок ниже рельсов, подъём —
+  ускоряющий на редстоуне), кнопки на верху блока пола платформы у нижнего спуска. Строить после проверки стенда metro-0-test (gen_metro_0.py).
 Линия 1 в этом этапе — без рельсов (коробка станции «Центр» готова, пути — с этапами 2–3).
 
 Запуск: gen_metro_1.py [--outdir schemas] [--preview docs/districts/metro-1-preview.png]
@@ -105,10 +105,12 @@ def build_common(P):
     P.stops1 = []
     for w in ('N', 'S'):
         for (x, z, f, k) in PM.line1_track(w):
-            if hx0 <= x <= hx1 and k in ('stop', 'stop2', 'low', 'boost_up'):
+            if hx0 <= x <= hx1 and f < F1:
                 P.shell(x, f - 1, z)
                 for y in range(f, F1): P.A.add((x, y, z)); P.S.pop((x, y, z), None)
-                if k == 'stop': P.stops1.append((x, f, z, w))
+            if hx0 <= x <= hx1 and f > F1:                       # гребень остановки — опора
+                for y in range(F1, f): P.X[(x, y, z)] = WALL; P.A.discard((x, y, z))
+            if hx0 <= x <= hx1 and k in ('stop', 'stop2') and f == F1 - 1: P.stops1.append((x, f, z, w))
     # марш остров → мезонин: подъём на запад, X −677 (ноги 56) … −680 (ноги 59), Z 1812…1814; стенка Z 1811,
     # ограждение Z 1815 (стекло-панели), свод зала над маршем снят
     fl = {-676: 55, -677: 56, -678: 57, -679: 58, -680: 59}
@@ -307,10 +309,12 @@ def build_line2(P):
     P.stops2 = []
     for w in ('W', 'E'):
         for (x, z, ff, k) in PM.line2_track(w):
-            if k in ('stop', 'stop2', 'low', 'boost_up'):
+            if ff < l2_feet(z):
                 P.shell(x, ff - 1, z)
                 for y in range(ff, l2_feet(z)): P.A.add((x, y, z)); P.S.pop((x, y, z), None)
-                if k == 'stop': P.stops2.append((x, ff, z, w))
+            if ff > l2_feet(z):                                     # гребень остановки — опора
+                for y in range(l2_feet(z), ff): P.X[(x, y, z)] = WALL; P.A.discard((x, y, z))
+            if k in ('stop', 'stop2') and ff == l2_feet(z) - 1: P.stops2.append((x, ff, z, w))
 
 
 def vokzal_exit_level(P):
@@ -378,7 +382,7 @@ def circuit_rails(cells, flat_every=24):
     R, RED = {}, set()
     near_stop = set()
     for i, c in enumerate(cells):
-        if c[3] in ('stop', 'stop2', 'low', 'boost_up'):
+        if c[3] in ('rise', 'crest', 'stop', 'stop2', 'low', 'boost_up'):
             for d in range(-3, 4): near_stop.add((i + d) % n)
     run = 0
     for i, (x, z, f, k) in enumerate(cells):
@@ -528,7 +532,8 @@ def rail_issues(final, R, RED, ring, buttons):
         for g in grp:
             for a, b, cc in N6:
                 if final(g[0] + a, g[2] + b, g[1] + cc) == 'redstone_block': out.append(('редстоун у стоянки', (g[0], g[2], g[1])))
-        if not any(abs(bx - x) + abs(bz - z) == 1 and by == f + 1 for bx, by, bz in buttons): out.append(('нет кнопки', (x, f, z)))
+        if not any(abs(bx - g[0]) + abs(bz - g[1]) == 1 and by == g[2] + 1 for bx, by, bz in buttons for g in grp):
+            out.append(('нет кнопки', (x, f, z)))
     for bx, by, bz in buttons:
         if not solid_ok(final(bx, by - 1, bz)) or final(bx, by - 1, bz) == 'redstone_block': out.append(('кнопка не на сплошном блоке', (bx, by, bz)))
         for a, b, cc in N6:

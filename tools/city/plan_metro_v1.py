@@ -133,18 +133,22 @@ def lerp_profile(prof, z):
     raise ValueError(z)
 
 
-def _stop(cells, i_stop, depth=3):
-    """«Впадина» остановки глубиной depth: depth спусков (стоянка — ускоряющие без питания; кнопка питает первый,
-    остальные — по цепи), низ (обычный рельс: разрывает цепь, иначе стоянка получит питание от подъёма), depth подъёмов
-    (ускоряющие на блоках редстоуна). Стенд 2026-10-02: после горки вагонетка проскакивала впадину глубиной 1 и 2 —
-    глубина 3 и ускоряющие по ровному реже (через 24), чтобы вагонетка не копила разгон."""
-    seq = [('stop', 1)] + [('stop2', d) for d in range(2, depth + 1)] + [('low', depth)] + \
-          [('boost_up', d) for d in range(depth, 0, -1)]
+def _stop(cells, i_stop, depth='raised'):
+    """Остановка. depth='raised' (основная, стенд 2026-10-03): подъём на 1 (обычный рельс), гребень, два спуска —
+    ускоряющие без питания (стоянка; кнопка — у нижнего, на верху блока пола платформы, верхний питается по цепи), низ
+    (обычный рельс: разрывает цепь, иначе стоянка получит питание от подъёма), подъём — ускоряющий на редстоуне.
+    Приямок — 1 бл. ниже рельсов. depth=1/2/3 — прежние впадины стенда (глубина 3 держала, но приямок слишком глубок;
+    1 и 2 при частых ускоряющих после горки проскакивались). cells[i_stop] — клетка подъёма (raised) или первого спуска."""
+    if depth == 'raised':
+        seq = [('rise', 0), ('crest', -1), ('stop', 0), ('stop2', 1), ('low', 1), ('boost_up', 1)]
+    else:
+        seq = [('stop', 1)] + [('stop2', d) for d in range(2, depth + 1)] + [('low', depth)] + \
+              [('boost_up', d) for d in range(depth, 0, -1)]
     for k, (kind, d) in zip(range(i_stop, i_stop + len(seq)), seq):
         x, z, f, _ = cells[k]; cells[k] = (x, z, f - d, kind)
 
 
-STOP_OFF = {'N': 8, 'S': -6, 'W': -6, 'E': 6}            # стоянка от края платформы (x0, x1, z1, z0)
+STOP_OFF = {'N': 8, 'S': -8, 'W': -8, 'E': 8}            # начало остановки (подъём) от края платформы (x0, x1, z1, z0)
 
 
 def line1_track(which, stations=STATIONS_1, f0=L1F):
@@ -238,7 +242,7 @@ def boxes(cfg):
     for a, b in runs: B.append((a, b, 1812, 1816, L1F - 1, L1F + 3, 'тоннель линии 1'))
     for w in ('N', 'S'):                                   # «впадины» остановок: пол на блок ниже
         for x, z, f, k in line1_track(w, cfg['st1']):
-            if k in ('stop', 'stop2', 'low', 'boost_up'): B.append((x, x, z, z, f - 1, f - 1, 'впадина остановки линии 1'))
+            if k in ('stop', 'stop2', 'low', 'boost_up') and f < L1F: B.append((x, x, z, z, f - 1, f - 1, 'впадина остановки линии 1'))
     # коллектор
     px0, px1 = cfg['pond']
     for a, b, z0, z1 in ((cfg['col_x'][0], px0 - 1, *COL_Z), (px0, px1, *COL_Z_POND), (px1 + 1, cfg['col_x'][1], *COL_Z)):
@@ -506,7 +510,7 @@ def draw(W, out, tracks, B, vc):
         return (min(r[0] for r in rg), max(r[1] for r in rg)) if rg else None
     t1 = tracks['линия 1 S']
     xs = sorted({c[0] for c in t1})
-    fmap = {c[0]: c[2] for c in t1 if c[3] in ('rail', 'stop', 'stop2', 'low', 'boost_up', 'curve')}
+    fmap = {c[0]: c[2] for c in t1 if c[3] in ('rail', 'rise', 'crest', 'stop', 'stop2', 'low', 'boost_up', 'curve')}
     p1 = [[(fmap.get(x, L1F), fmap.get(x, L1F) + 2, (60, 110, 220)), (COL_FLOOR + 1, COL_TOP, (240, 160, 40))] for x in xs]
     profile(y0s + SEC_H - 30, 'Профиль линии 1 по Z 1815 (X −794…−594, ×3): рельеф по оси, природные пустоты (съёмка), путь, коллектор',
             p1, [W.surf(x, 1815, ymax=75) or 60 for x in xs], [vv(x, 1815) for x in xs])

@@ -2,7 +2,7 @@
 rem Metro stage 1, step 2: line 2 rails, boosters, redstone, buttons (ONLY after the test stand worked), about 2 min
 rem BEFORE START: stand (or fly) near Cathedral square (about -690 66 1800) so the chunks stay loaded.
 cd /d "%~dp0\.."
-node index-cmd.js metro-1-rails.json -694 46 1748
+node index-cmd.js metro-1-rails.json -694 48 1748
 echo.
 echo CHECK the last summary line above: the number of errors (N) must be 0.
 echo If N is 0 - done: ride line 2 and send remarks.
