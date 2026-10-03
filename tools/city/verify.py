@@ -80,7 +80,7 @@ REGISTRY = {
         ('gen_industry_3.py', ['--outdir', '{T}', '--preview', ''], {'industry-3-basement.json': 'industry-3-basement.json'}),
     ],
     'metro': [
-        ('gen_metro_0.py', ['--outdir', '{T}'], {'metro-0-test.json': 'metro-0-test.json', 'metro-0-fix-1.json': 'metro-0-fix-1.json'}),
+        ('gen_metro_0.py', ['--outdir', '{T}'], {'metro-0-test.json': 'metro-0-test.json', 'metro-0-fix-1.json': 'metro-0-fix-1.json', 'metro-0-fix-2.json': 'metro-0-fix-2.json'}),
         ('gen_metro_1.py', ['--outdir', '{T}', '--preview', ''],
          {'metro-1-build.json': 'metro-1-build.json', 'metro-1-rails.json': 'metro-1-rails.json'}),
     ],

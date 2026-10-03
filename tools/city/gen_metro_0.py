@@ -29,7 +29,9 @@ import plan_metro_v1 as PM  # noqa: E402
 from gen_metro_1 import circuit_rails, rail_issues, WALL, FLOOR, EDGE, N6  # noqa: E402
 
 NAME = 'metro-0-test.json'
-FIX = 'metro-0-fix-1.json'                # остановка глубиной 2 (стенд: с одним спуском вагонетка иногда проскакивала)
+FIXES = ['metro-0-fix-1.json',            # редакция 2: остановка глубиной 2 (с одним спуском вагонетка иногда проскакивала)
+         'metro-0-fix-2.json']            # редакция 3: глубина 3, ускоряющие по ровному через 24 (после горки проскакивала и 2)
+VER = {1: dict(off=(2, -2), depth=1, flat=8), 2: dict(off=(4, -4), depth=2, flat=8), 3: dict(off=(8, -5), depth=3, flat=24)}
 F = 71                                   # ноги (рельс) — на блок выше грунта 70
 X0, X1 = -851, -818                      # петли
 ZN, ZS, ZG = 1847, 1849, 1848
@@ -43,7 +45,7 @@ def stand_ground():
     return lambda x, z: d['ground'][(z - d['z0']) * d['w'] + x - d['x0']]
 
 
-def track(which, v1=False):
+def track(which, v=3):
     """Путь в направлении движения: N — на запад по Z 1847, S — на восток по Z 1849; (x, z, ноги, вид)."""
     xs = range(X1 - 1, X0, -1) if which == 'N' else range(X0 + 1, X1)
     home, zj = (ZN, JN) if which == 'N' else (ZS, JS)
@@ -61,10 +63,10 @@ def track(which, v1=False):
         else: cells.append((x, home, f, 'rail'))
     loop = [(ZN, 'curve'), (ZG, 'railz'), (ZS, 'curve')]
     cells += [(X0, z, F, k) for z, k in loop] if which == 'N' else [(X1, z, F, k) for z, k in loop[::-1]]
-    off = 2 if v1 else 4
-    xs_stop = ST['x0'] + off if which == 'N' else ST['x1'] - off
+    V = VER[v]
+    xs_stop = ST['x0'] + V['off'][0] if which == 'N' else ST['x1'] + V['off'][1]
     i = next(k for k, c in enumerate(cells) if c[0] == xs_stop and c[3] == 'rail')
-    PM._stop(cells, i, 1 if v1 else 2)
+    PM._stop(cells, i, V['depth'])
     return cells
 
 
@@ -74,23 +76,30 @@ def main():
     ap.add_argument('--preview', default='')
     a = ap.parse_args()
     gr = stand_ground()
-    D0, *_ = build(gr, True)                                  # первая редакция — как построено
-    D, ring, R, RED, buttons = build(gr, False)
+    Ds = {v: build(gr, v)[0] for v in (1, 2)}               # построенные редакции
+    D, ring, R, RED, buttons = build(gr, 3)
+    Ds[3] = D
     os.makedirs(a.outdir, exist_ok=True)
-    o0, *_ = save_schema(dict(D0), os.path.join(a.outdir, NAME))
-    fix = {k: b for k, b in D.items() if D0.get(k) != b}
-    for k, b in D0.items():
-        if k not in D and b.startswith(('rail', 'golden_rail', 'stone_button', 'redstone_block')):
-            fix[k] = 'air' if k[1] > gr(k[0], k[2]) else WALL
-    of, relf, orderf, dimsf = save_schema(dict(fix), os.path.join(a.outdir, FIX))
-    print(f'{NAME}: origin {o0[0]} {o0[1]} {o0[2]} (первая редакция, построена) | записей {len(D0)}')
-    print(f'{FIX}: origin {of[0]} {of[1]} {of[2]} | габарит {dimsf[0]} {dimsf[1]} {dimsf[2]} | записей {len(fix)}')
-    checks(gr, D, ring, R, RED, buttons, D0, fix, of, relf, orderf)
+    o0, *_ = save_schema(dict(Ds[1]), os.path.join(a.outdir, NAME))
+    print(f'{NAME}: origin {o0[0]} {o0[1]} {o0[2]} (редакция 1, построена) | записей {len(Ds[1])}')
+    built = dict(Ds[1])
+    for v, name in ((2, FIXES[0]), (3, FIXES[1])):
+        new = Ds[v]
+        fix = {k: b for k, b in new.items() if built.get(k) != b}
+        for k, b in built.items():
+            if k not in new and b.startswith(('rail', 'golden_rail', 'stone_button', 'redstone_block')):
+                fix[k] = 'air' if k[1] > gr(k[0], k[2]) else WALL
+        of, relf, orderf, dimsf = save_schema(dict(fix), os.path.join(a.outdir, name))
+        print(f'{name}: origin {of[0]} {of[1]} {of[2]} | габарит {dimsf[0]} {dimsf[1]} {dimsf[2]} | записей {len(fix)}'
+              + (' (построено)' if v == 2 else ''))
+        prev = dict(built)
+        built.update(fix)
+    checks(gr, D, ring, R, RED, buttons, prev, fix, of, relf, orderf)
 
 
-def build(gr, v1):
-    ring = track('N', v1) + track('S', v1)
-    R, RED = circuit_rails(ring)
+def build(gr, v):
+    ring = track('N', v) + track('S', v)
+    R, RED = circuit_rails(ring, VER[v]['flat'])
     D = {}
     # остров: андезит, край у путей — жёлтый бетон
     for x in range(ST['x0'], ST['x1'] + 1):
@@ -124,7 +133,7 @@ def checks(gr, D, ring, R, RED, buttons, D0, fix, o, rel, order):
     def terr(x, y, z): return base(x + o[0], y + o[1], z + o[2])
     errs = dl.check_water(rel, terr)
     se, wr = dl.check_supports(rel, order, terr)
-    print(f'{FIX}: опоры/вода/порядок постройки (decor_lib, порядок бота; поверх metro-0-test): ошибок {len(errs) + len(se)} | предупреждений {len(wr)}')
+    print(f'{FIXES[1]}: опоры/вода/порядок постройки (decor_lib, порядок бота; поверх построенного): ошибок {len(errs) + len(se)} | предупреждений {len(wr)}')
     for m in (errs + se + wr)[:6]: print('   ', m)
 
     def fin_of(cells):

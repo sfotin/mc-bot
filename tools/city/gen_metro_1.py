@@ -12,8 +12,8 @@
   андезит, край платформы — жёлтый бетон, свет — морские фонари; природные пустоты (съёмка
   docs/terrain/metro-voids.json), открытые в постройку, заделываются;
 - metro-1-rails.json — путь линии 2 (кольцо: на юг по X −693, петля у «Набережной», на север по X −691, петля у
-  «Вокзала»): рельсы, ускоряющие на блоках редстоуна (подъёмы по ходу — все, по ровному — через 8), остановки
-  «впадиной» (спуск — ускоряющий без питания, низ — обычный, подъём — ускоряющий на редстоуне), кнопки на верху
+  «Вокзала»): рельсы, ускоряющие на блоках редстоуна (подъёмы по ходу — все, по ровному — через 24), остановки
+  «впадиной» глубиной 3 (спуски — ускоряющие без питания, низ — обычный, подъёмы — ускоряющие на редстоуне), кнопки на верху
   блока платформы у спуска. Строить после проверки стенда metro-0-test (gen_metro_0.py).
 Линия 1 в этом этапе — без рельсов (коробка станции «Центр» готова, пути — с этапами 2–3).
 
@@ -370,7 +370,7 @@ SLOPE = {'E': 2, 'W': 3, 'N': 4, 'S': 5}
 CURVE = {frozenset('SE'): 6, frozenset('SW'): 7, frozenset('NW'): 8, frozenset('NE'): 9}
 
 
-def circuit_rails(cells, flat_every=8):
+def circuit_rails(cells, flat_every=24):
     """cells — кольцо (x, z, ноги, вид) в направлении движения. → {(x, y, z): блок}, редстоун, кнопки-кандидаты.
     Ускоряющие: стоянка (без питания), подъём впадины и подъёмы по ходу (на редстоуне), по ровному через flat_every
     (не ближе 3 клеток к стоянке — иначе цепь ускоряющих передаст питание)."""
@@ -520,7 +520,8 @@ def rail_issues(final, R, RED, ring, buttons):
     for i, c in enumerate(ring):
         if c[3] != 'stop': continue
         x, z, f = c[0], c[1], c[2]
-        grp = [c] + ([ring[(i + 1) % len(ring)]] if ring[(i + 1) % len(ring)][3] == 'stop2' else [])
+        grp = [c]
+        while ring[(i + len(grp)) % len(ring)][3] == 'stop2': grp.append(ring[(i + len(grp)) % len(ring)])
         for j in (i - 1, (i + len(grp)) % len(ring)):
             p = ring[j]
             if final(p[0], p[2], p[1]).startswith('golden'): out.append(('ускоряющий рядом со стоянкой — питание цепью', (x, f, z)))
@@ -563,7 +564,8 @@ def checks(W, P, D, RS, ring, R, RED, outs, a):
     final = fin_of(ALL)
     print(f'задеты построенные (воздух на месте построенного): {len(P.hits)}', P.hits[:4],
           f'| оставлено построенное в стенах/своде: {len(P.kept)}')
-    opened = [n for k, b in ALL.items() if b == 'air' for a_, b_, c_ in N6
+    opn = lambda b: b == 'air' or b.startswith(('rail', 'golden_rail', 'stone_button'))
+    opened = [n for k, b in ALL.items() if opn(b) for a_, b_, c_ in N6
               for n in [(k[0] + a_, k[1] + b_, k[2] + c_)] if n not in ALL and P.SV.natural(*n)]
     print(f'протечки (природные пустоты, открытые в постройку): {len(opened)}', opened[:3], f'| заделано клеток: {len(P.sealed)}')
     wo = [k for k, b in ALL.items() if b == 'air' and any(base(k[0] + x, k[1] + y, k[2] + z).startswith('water') and (k[0] + x, k[1] + y, k[2] + z) not in ALL
@@ -623,7 +625,7 @@ def checks(W, P, D, RS, ring, R, RED, outs, a):
     print('НЕГАТИВ: убран фонарь — тёмные клетки найдены:', len(dk) > 0)
     if P.sealed:
         neg = dict(ALL); del neg[P.sealed[0]]
-        op = [1 for k, b in neg.items() if b == 'air' for a_, b_, c_ in N6
+        op = [1 for k, b in neg.items() if opn(b) for a_, b_, c_ in N6
               if (k[0] + a_, k[1] + b_, k[2] + c_) not in neg and P.SV.natural(k[0] + a_, k[1] + b_, k[2] + c_)]
         print('НЕГАТИВ: убрана заделка пустоты — протечка найдена:', len(op) > 0)
     if a.preview: preview(a.preview, final, W, P, D, RS)

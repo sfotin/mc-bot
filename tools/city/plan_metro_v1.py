@@ -133,14 +133,18 @@ def lerp_profile(prof, z):
     raise ValueError(z)
 
 
-def _stop(cells, i_stop, depth=2):
-    """«Впадина» остановки — пять клеток: два спуска (стоянка — ускоряющие без питания; кнопка питает первый, второй —
-    по цепи), низ (обычный рельс: разрывает цепь, иначе стоянка получит питание от подъёма), два подъёма (ускоряющие на
-    блоках редстоуна). Глубина 2: с одним спуском вагонетка на полной скорости иногда проскакивала (стенд 2026-10-02)."""
-    seq = (('stop', 1), ('stop2', 2), ('low', 2), ('boost_up', 2), ('boost_up', 1)) if depth == 2 else \
-        (('stop', 1), ('low', 1), ('boost_up', 1))          # глубина 1 — первая редакция стенда (metro-0-test)
+def _stop(cells, i_stop, depth=3):
+    """«Впадина» остановки глубиной depth: depth спусков (стоянка — ускоряющие без питания; кнопка питает первый,
+    остальные — по цепи), низ (обычный рельс: разрывает цепь, иначе стоянка получит питание от подъёма), depth подъёмов
+    (ускоряющие на блоках редстоуна). Стенд 2026-10-02: после горки вагонетка проскакивала впадину глубиной 1 и 2 —
+    глубина 3 и ускоряющие по ровному реже (через 24), чтобы вагонетка не копила разгон."""
+    seq = [('stop', 1)] + [('stop2', d) for d in range(2, depth + 1)] + [('low', depth)] + \
+          [('boost_up', d) for d in range(depth, 0, -1)]
     for k, (kind, d) in zip(range(i_stop, i_stop + len(seq)), seq):
         x, z, f, _ = cells[k]; cells[k] = (x, z, f - d, kind)
+
+
+STOP_OFF = {'N': 8, 'S': -6, 'W': -6, 'E': 6}            # стоянка от края платформы (x0, x1, z1, z0)
 
 
 def line1_track(which, stations=STATIONS_1, f0=L1F):
@@ -170,9 +174,9 @@ def line1_track(which, stations=STATIONS_1, f0=L1F):
     for s in stations:
         if s['kind'] == 'term' and s['side'] != which: continue
         if which == 'N':          # на запад: стоянка у западного конца платформы
-            i = next(k for k, c in enumerate(cells) if c[0] == s['x0'] + 4 and c[3] == 'rail')
+            i = next(k for k, c in enumerate(cells) if c[0] == s['x0'] + STOP_OFF['N'] and c[3] == 'rail')
         else:
-            i = next(k for k, c in enumerate(cells) if c[0] == s['x1'] - 4 and c[3] == 'rail')
+            i = next(k for k, c in enumerate(cells) if c[0] == s['x1'] + STOP_OFF['S'] and c[3] == 'rail')
         _stop(cells, i)
     return cells
 
@@ -203,8 +207,8 @@ def line2_track(which, prof=L2_PROFILE, stations=STATIONS_2):
     else: cells += [(x, L2_Z[0], prof[0][1], k) for x, k in loop[::-1]]
     for s in stations:
         if s['kind'] == 'term' and s['side'] != which: continue
-        if which == 'W': i = next(k for k, c in enumerate(cells) if c[1] == s['z1'] - 4 and c[3] == 'rail')
-        else: i = next(k for k, c in enumerate(cells) if c[1] == s['z0'] + 4 and c[3] == 'rail')
+        if which == 'W': i = next(k for k, c in enumerate(cells) if c[1] == s['z1'] + STOP_OFF['W'] and c[3] == 'rail')
+        else: i = next(k for k, c in enumerate(cells) if c[1] == s['z0'] + STOP_OFF['E'] and c[3] == 'rail')
         _stop(cells, i)
     return cells
 
